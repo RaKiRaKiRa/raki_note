@@ -2503,6 +2503,9 @@ EXT4：使用广泛
 
 14. memcpy
 
+15. 线程安全hashmap
+    <https://blog.csdn.net/jiankunking/article/details/78808978>
+
 
 
 # 内核（乱，大多合并至4,5）

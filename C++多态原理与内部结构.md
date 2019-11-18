@@ -9,8 +9,8 @@
 ## 虚函数相关
 首先我们来说一下，C++中多态的表象，**在基类的函数前加上virtual关键字，在派生类中重写该函数，运行时将会根据对象的实际类型来调用相应的函数**。如果对象类型是派生类，就调用派生类的函数，如果是基类，就调用基类的函数。
 实际上，**当一个类中包含虚函数时，编译器会为该类生成一个虚函数表，保存该类中虚函数的地址**，同样，派生类继承基类，派生类中自然一定有虚函数，所以**编译器也会为派生类生成自己的虚函数表**。当我们定义一个派生类对象时，编译器检测该类型有虚函数，所以为这个派生**类对象生成一个虚函数指针，指向该类型的虚函数表**，这个虚函数**指针的初始化在构造函数中完成**的。后续如果有一个基类类型的指针，指向派生类，那么当调用虚函数时，**从对象的前4个字节中取虚表地址**，根据所指真正对象的虚函数表指针去寻找虚函数的地址，也就可以调用派生类的虚函数表中的虚函数。以此实现多态。
- ![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914165720280.png)
- ![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914165725406.png)
+ ![在这里插入图片描述](media/20190914165720280.png)
+ ![在这里插入图片描述](media/20190914165725406.png)
 补充：
 如果基类中没有定义成virtual，那么进行`Base B; Derived D; Base *p = D; p->function(); `这种情况下调用的则是Base中的function()。
 因为基类和派生类中都没有虚函数的定义，那么编译器就会认为不用留给动态多态的机会，就**事先进行函数地址的绑定（早绑定）**。
@@ -29,17 +29,17 @@
  1. **拷贝基类的虚函数表**，如果是多继承，就拷贝每个有虚函数基类的虚函数表，当然还有一个基类的虚函数表和派生类自身的虚函数表共用了一个虚函数表，也称为某个基类为派生类的主基类；
  2.  查看派生类中是否有重写基类中的虚函数，如果有，就**替换成已经重写的虚函数地址**；
  3. 查看派生类是否有自身的虚函数，如果有，就**追加自身的虚函数到自身的虚函数表**中。
-![在这里插入图片描述](https://img-blog.csdnimg.cn/2019091417051623.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![在这里插入图片描述](media/xubiao.png)
 编译器使用虚函数表的过程要注意的是：
 `Derived *pd = new D();  B *pb = pd;  C *pc = pd; `
 `其中pb，pd，pc的指针位置是不同，要注意的是派生类的自身的内容要追加在主基类的内存块后。
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914170535599.png)
+![在这里插入图片描述](media/20190914170535599.png)
 ## 	多继承与重复继承与虚继承的内部结构
 ### 多继承
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914201923919.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![在这里插入图片描述](media/duolianjie.png)
 ### 重复继承
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914201946518.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![在这里插入图片描述](media/chongfujicheng.png)
 ### 虚继承（菱形继承）
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914202028475.png)![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914202059267.png)
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914202112393.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190914202120212.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![在这里插入图片描述](media/20190914202028475.png)![在这里插入图片描述](media/20190914202059267.png)
+![在这里插入图片描述](media/neijiegou.png)
+![在这里插入图片描述](media/xubiaoti.png)

@@ -3,7 +3,7 @@
 
 ## 内存布局
 介绍ptmalloc之前，我们先了解一下内存布局，以x86的32位系统为例：
-![在这里插入图片描述](https://img-blog.csdnimg.cn/2019092623021619.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/2019092623021619.png)
 从上图可以看到，**栈至顶向下扩展，堆至底向上扩展**， <font color=red>mmap 映射区域至顶向下扩展</font>。 mmap 映射区域和堆相对扩展，直至耗尽虚拟地址空间中的剩余区域，这种结构便于 C 运行时库使用 mmap 映射区域和堆进行内存分配。
 
 ## brk（sbrk）和mmap函数
@@ -81,7 +81,7 @@ chunk 的定义相当简单明了，对各个域做一下简单介绍 :
 chunk的结构可以分为使用中的chunk和空闲的chunk。使用中的chunk和空闲的chunk数据结构基本项同，但是会有一些设计上的小技巧，巧妙的节省了内存。
 
 ### 使用中的chunk：
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190926230645492.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/20190926230645492.png)
 
 说明：
 　　1、 **chunk指针指向chunk开始的地址；mem指针指向用户内存块开始的地址。**
@@ -91,7 +91,7 @@ chunk的结构可以分为使用中的chunk和空闲的chunk。使用中的chunk
 　　5、 A=0 为主分配区分配；A=1 为非主分配区分配。
 
 ### 空闲的chunk：
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190926230709540.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/20190926230709540.png)
 
 说明：
 
@@ -114,7 +114,7 @@ chunk的结构可以分为使用中的chunk和空闲的chunk。使用中的chunk
 　　保存这些bin的数据结构为：
 　　fastbinsY：这个数组用以保存fast bins。
 　　bins：这个数组用以保存unsorted、small以及large bins，共计可容纳126个：
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190927172622370.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/20190927172622370.png)
 　　当用户调用malloc的时候，能很快找到用户需要分配的内存大小是否在维护的bin上，如果在某一个bin上，就可以通过双向链表去查找合适的chunk内存块给用户使用。
 
 bins数组中的第一个为 unsorted bin.
@@ -136,7 +136,8 @@ ptmalloc 使用<font color = red>**smallest-first，best-fit（以最小块优�
 　　当用户释放一块不大于max_fast（默认值64B）的chunk的时候，会默认会被放到fast bins上。<font color = red>**当需要给用户分配的 chunk 小于或等于 max_fast 时,malloc 首先会到fast bins上寻找是否有合适的chunk，**</font>
 　　除非特定情况，两个毗连的空闲chunk并不会被合并成一个空闲chunk。不合并可能会导致碎片化问题，但是却可以大大加速释放的过程！
 　　分配时，binlist中被检索的第一个个chunk将被摘除并返回给用户。free掉的chunk将被添加在索引到的binlist的前端。
-　　![在这里插入图片描述](https://img-blog.csdnimg.cn/20190927173520171.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+　　![](media/20190927173520171.png)
+
 #### 2. unsorted bin。
 　　**unsorted bin 的队列使用 bins 数组的第一个位置**，是bins的一个缓冲区，加快分配的速度。<font color=red>**当用户释放的内存大于max_fast或者fast bins合并后的chunk都会首先进入unsorted bin上。**</font>
 　　<font color=blue>**在进行 malloc 操作的时候，如果在 fast bins 中没有找到合适的 chunk，则 ptmalloc 会先在 unsorted bin 中查找合适的空闲 chunk，如果没有合适的bin，ptmalloc会将unsorted bin上的chunk放入bins上，然后才查找 bins。**</font>
@@ -148,21 +149,23 @@ ptmalloc 使用<font color = red>**smallest-first，best-fit（以最小块优�
 4. 如果unsorted bins中的某一chunk大小 属于large bins的范围，则找到合适的位置放入。
 
 　　chunk大小 – 无尺寸限制，任何大小chunk都可以添加进这里。这种途径给予 ‘glibc malloc’ 第二次机会以重新使用最近free掉的chunk，这样寻找合适bin的时间开销就被抹掉了，因此内存的分配和释放会更快一些。
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190927173537130.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/20190927173537130.png)
+
 #### 3. small bins
 　　**大小<512字节的chunk被称为small chunk**，而保存small chunks的bin被称为small bin。
 　　**数组从2开始编号，前64个bin为small bins**，<font color=red>**small bin每个bin之间相差8个字节，同一个small bin中的chunk具有相同大小。**</font>
 　　每个small bin都包括一个空闲区块的双向循环链表（也称binlist）。<font color=green>**free掉的chunk添加在链表的前端，而所需chunk则从链表后端摘除。**</font>
 　　<font color=blue>**两个毗连的空闲chunk会被合并成一个空闲chunk。合并消除了碎片化的影响但是减慢了free的速度。**</font>
 　　分配时，当small bin非空后，相应的bin会摘除binlist中最后一个chunk并返回给用户。<font color=red>>在free一个chunk的时候，检查(虚拟地址上连续的)其前或其后的chunk是否空闲，若是则合并，也即把它们从所属的链表中摘除并合并成一个新的chunk，新chunk会添加在unsorted bin链表的前端。</font>
-　　![在这里插入图片描述](https://img-blog.csdnimg.cn/20190927183619996.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+　　![](media/20190927183619996.png)
+
 #### 4.large bins
 　　**大小大于等于512字节的chunk被称为large chunk**，而保存large chunks的bin被称为large bin**（第65~第128）**，位于small bins后面。large bins中的每一个bin分别包含了一个给定范围内的chunk，<font color=red>**其中的chunk按大小递减排序，大小相同则按照最近使用时间排列。**</font>
 　　
 　　<font color=green>**分配时，遵循原则“smallest-first , best-fit”,从顶部遍历到底部以找到一个大小最接近用户需求的chunk。一旦找到，相应chunk就会分成两块，User chunk（用户请求大小）返回给用户，Remainder chunk（剩余大小）添加到unsorted bin。**</font>
 　　
 　　free时和small bin 类似。<font color=blue>**两个毗连的空闲chunk会被合并成一个空闲chunk。**</font>
-![在这里插入图片描述](https://img-blog.csdnimg.cn/20190927184549876.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L1JhS2lSYUtpUmE=,size_16,color_FFFFFF,t_70)
+![](media/20190927184549876.png)
 
 
 ## 例外

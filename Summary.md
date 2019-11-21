@@ -166,6 +166,26 @@ mmap系统调用与read/write调用的区别在于：
 ### 19. BlockingQueue作用
 任务由生产者生产完成，然后交由消费者（通常是业务相关的处理器）进行消费，完成任务的处理。由于**生产者和消费者的处理能力不可能完全一致**，参考实际生活中生产线或工厂库存，**可使用Queue来对二者进行隔离**。生产者将任务生产完毕之后，不是直接交由消费者来进行立即消费，而是将其加入到Queue中；消费者从Queue中获取任务，然后进行任务分配处理。通过Queue进行隔离之后，生产者和消费者的数目可以不同，通常而言，消费者会是任务处理中的瓶颈，因此这种方式更适宜少生产者，多消费者的业务场景。
 
+
+
+### 20.RPC组成
+
+采用json格式的序列化/反序列化方案, 传输协议为[JSON-RPC 2.0](http://www.jsonrpc.org/specification)
+
+[网络库](https://github.com/RaKiRaKiRa/Cyclone)位于框架底层, 向下调用Linux socket API, 向上提供消息回调. 此外,网络库还具有定时器, 线程池, 日志输出等功能. [json parser/generator](https://github.com/guangqianpeng/jackson)用于解析接收到的JSON object, 并生成需要发送的JSON object. **service/client stub**由程序自动生成, 用户只要include相应的stub就可以接收/发起RPC.
+
+![1574275569909](Summary/1574275569909.png)
+
+
+
+client stub内会包含一个RpcClient, 根据spec.json生成不同的调用接口用于调用RpcClient的Call方法。
+
+Service Stub则是一个调用不同用户通过spec.json生成的接口的base class, 而用户应写一个继承了这个base service的类并提供接口给service调用。
+
+json解析和网络通信都封装在RpcClient和RpcServer里，由网络库Cyclone提供。
+
+
+
 ## 1语言基础（C++）
 
 ### **1. 指针和引用的区别**
@@ -2666,6 +2686,8 @@ TODO：详细
 ### 10. 分布式一致性和分布式共识协议
       <http://www.calvinneo.com/2017/09/20/distributed-system-consistency-and-consensus/> 不全，算是概论
 ### 11. 哈希一致性
+
+### 12. RPC组成
 
 
 

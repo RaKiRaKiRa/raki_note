@@ -55,8 +55,11 @@ slab分配器有以下三个基本目标：
 - 部分满：有一些对象已分配出去，有些对象还空闲着。
 - 空：没有分配出任何对象（slab中的所有对象都是空闲的）
 
-下图显示了高速缓存、slab及对象之间的关系：
+### 对象
 
+object是slab内存分配器对外提供的申请内存的基本单位。slab内存分配器从buddy system申请了buddy之后，会将其拆分成一个个object，并缓存在kmem cache实例的cpu_cache中，用户申请内存时，其实获取的就是一个个object。
+
+一旦object缓存耗尽，就会重新从buddy system申请slab，并将其拆分成object，放入内存池。
 
 
 ### 分配对象过程
@@ -80,7 +83,7 @@ slab分配器有以下三个基本目标：
  */
 struct kmem_cache_s {
 	···
-	struct kmem_list3	lists;	//包含三个链表的结构体,三个链表对应满 空 半满的slabs
+	struct kmem_list3	lists;	//包含三个链表的结构体,三个链表对应满 空 半满的slabs，每个链表里存着slab_s
 	
 	unsigned int		objsize;
 	unsigned int	 	flags;	/* constant flags */
@@ -120,11 +123,15 @@ struct kmem_cache_s {
 
 **Slab才是真正存放”对象”的地方。管理这些”对象”的结构就是slab描述符。**
 
+slab高速缓存分为两大类，普通高速缓存和专用高速缓存。
+
+专用高速缓存是根据内核所需，通过指定具体的对象而创建。
+
 ### 通用缓存描述符
 
 通用缓存总是**成对出现**，其中存放预定大小的对象。**一个缓存从DMA内存区分配对象，另一个缓存从普通内存区中分配**。
 
-**`struct cache_sizes` 存放通用缓存大小的所有信息，其存放于`cache_cache` 缓存**
+**`struct cache_sizes` 存放通用缓存大小的所有信息**
 
 slab缓存是在系统自举是被静态初始化，以确保缓存描述符存储空间可用。
 
@@ -140,7 +147,10 @@ struct cache_sizes {
 - cs_size：      		该字段存放该缓存中所包含的内存对象的大小
 - cs_cachep：          该字段存放指向普通内存缓存描述符的指针，这种缓存存放的对象分配自 ZONE_NORMAL内存区。
 - cs_dmacachep：  该字段存放指向DMA内存缓存描述符的指针，DMA内存缓存存放的对象分配自ZONE_DMA。
-  
+
+普通高速缓存并不针对内核中特定的对象，它**首先会为`kmem_cache`结构本身提供高速缓存**，这类缓存保存在`cache_cache`变量中(**cache_cache 缓存便是专门用来存放缓存描述符对象的**)，该变量即代表的是cache_chain链表中的第一个元素；另一方面，它为内核提供了一种通用高速缓存。
+
+它**从 cache_cache 普通高速缓存中为新的高速缓存分配一个高速缓存描述符，并把这个描述符插入到高速缓存描述符的cache_chain链表中**（当获得了用于保护链表避免被同时访问的cache_chain_sem信号量后，插入操作完成）。
 
 ### slab描述符
 
@@ -151,11 +161,11 @@ struct cache_sizes {
 
 <font color=red>**当对象小于512字节时，或者当内碎片在slab内部为slab及对象描述符留下足够的空间时，slab 分配器选择第二种方案**</font>。
 
-![img](内存管理4 slab/301716456338618.jpg)
+![img](内存管理4 slab/1765518-22cc67d19609a153.webp)
 
 ```c
 typedef struct slab_s {
-        struct list_head    list;		// 指向高速缓存描述符中的slabs_full、slabs_partial或 slabs_free链表
+        struct list_head    list;		// 用于高速缓存描述符中的lists中的slabs_full、slabs_partial或 slabs_free链表的next和prev
         unsigned long    	colouroff;
         void    			*s_mem;     /* including colour offset */
         unsigned int      	inuse;  	/* num of objs active in slab */
@@ -165,7 +175,48 @@ typedef struct slab_s {
 
 - list：指向slab描述符的三个双向循环链表中的一个（在高速缓存描述符中的slabs_full、slabs_partial或 slabs_free链表）
 - clouroff：slab中第一个对象的偏移
-- s_mem：指向 slab 中第一个”对象”（或被分配或空闲）。
+- **s_mem**：指向 slab 中**第一个”对象”**（或被分配或空闲）。
 - inuse：当前所分配的slab中的对象个数。对于满或者部分满的slab，该值为正值；对于空闲slab，该值为0。
 - free：指向slab中的第一个空闲对象（如果有）。kmem_bufctl_t 数据类型链接处于同一slab中的所有对象。
   
+
+### 本地CPU空闲对象链表
+
+现在说说本地CPU空闲对象链表。这个在kmem_cache结构中用cpu_cache表示，整个数据结构是struct array_cache，它的目的是将释放的对象加入到这个链表中，我们可以先看看数据结构：
+
+```c
+struct array_cache {
+    /* 可用对象数目 */
+    unsigned int avail;
+    /* 可拥有的最大对象数目，和kmem_cache中一样 */
+    unsigned int limit;
+    /* 同kmem_cache，要转移进本地高速缓存或从本地高速缓存中转移出去的对象的数量 */
+    unsigned int batchcount;
+    /* 是否在收缩后被访问过 */
+    unsigned int touched;
+    /* 伪数组，初始没有任何数据项，之后会增加并保存释放的对象指针 */
+    void *entry[];    /*
+};
+```
+
+​	因为每个CPU都有它们自己的硬件高速缓存，当此CPU上释放对象时，可能这个对象很可能还在这个CPU的硬件高速缓存中，所以**内核为每个CPU维护一个这样的链表，当需要新的对象时，会优先尝试从当前CPU的本地CPU空闲对象链表获取相应大小的对象。**这个本地CPU空闲对象链表在系统初始化完成后是一个空的链表，只有释放对象时才会将对象加入这个链表。当然，链表对象个数也是有所限制，其最大值就是limit，链表数超过这个值时，会将batchcount个数的对象返回到所有CPU共享的空闲对象链表(也是这样一个结构)中。
+
+　　注意在array_cache中有一个entry数组，里面保存的是指向空闲对象的首地址的指针，注意这个链表是在kmem_cache结构中的，也就是kmalloc-8有它自己的本地CPU高速缓存链表，dquot也有它自己的本地CPU高速缓存链表，每种类型kmem_cache都有它自己的本地CPU空闲对象链表。
+
+### 总结
+
+#### 分配
+
+1. 系统首先会从本地CPU空闲对象链表中尝试获取一个对象用于分配；
+2. 如果失败，则尝试来到所有CPU共享的空闲对象链表链表中尝试获取；
+3. 如果还是失败，就会从SLAB中分配一个；
+4. 这时如果还失败，kmem_cache会尝试从页框分配器中获取一组连续的页框建立一个新的SLAB，然后从新的SLAB中获取一个对象。
+
+#### 释放
+
+1. 首先会先将对象释放到本地CPU空闲对象链表中，
+2. 如果本地CPU空闲对象链表中对象过多，kmem_cache会将本地CPU空闲对象链表中的batchcount个对象移动到所有CPU共享的空闲对象链表链表中，
+3. 如果所有CPU共享的空闲对象链表链表的对象也太多了，kmem_cache也会把所有CPU共享的空闲对象链表链表中batchcount个数的对象移回它们自己所属的SLAB中，
+4. 这时如果SLAB中空闲对象太多，kmem_cache会整理出一些空闲的SLAB，将这些SLAB所占用的页框释放回页框分配器中。
+
+![img](内存管理4 slab/111216330517976.jpg)

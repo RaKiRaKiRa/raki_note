@@ -161,7 +161,7 @@ struct cache_sizes {
 
 <font color=red>**当对象小于512字节时，或者当内碎片在slab内部为slab及对象描述符留下足够的空间时，slab 分配器选择第二种方案**</font>。
 
-![img](内存管理4 slab/1765518-22cc67d19609a153.webp)
+![img](内存管理4 slab/1765518-22cc67d19609a153.jpg)
 
 ```c
 typedef struct slab_s {

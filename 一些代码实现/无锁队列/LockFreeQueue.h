@@ -20,6 +20,20 @@ public:
         tail_(head_)
     {}
 
+    ~LockFreeQueue()
+    {
+        Node<Type> *p;
+        while(head_ ->next != NULL)
+        {
+            p = head_ ->next;
+            head_ ->next = p->next;
+            delete p;
+        }
+        delete head_;
+        head_ = NULL;
+        tail_ = NULL;
+    }
+
     void push(Type val)
     {
         Node<Type>* node = new Node<Type>(val);

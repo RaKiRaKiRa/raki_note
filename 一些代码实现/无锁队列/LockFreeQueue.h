@@ -23,24 +23,24 @@ public:
     void push(Type val)
     {
         Node<Type>* node = new Node<Type>(val);
-        Node<Type>* p = tail_;
+        Node<Type>* tail = tail_;
         do{
-            while(p->next != NULL)
-                p = p->next;
-        }while(!__sync_bool_compare_and_swap(p->next, NULL, node));
-        __sync_bool_compare_and_swap(tail_, p, node);
+            while(tail->next != NULL)
+                tail = tail->next;
+        }while(!__sync_bool_compare_and_swap(&(p->next), NULL, node));
+        __sync_bool_compare_and_swap(&(tail_), p, node);
     }
 
     bool pop(Type *res)
     {
-        Node<Type>* node = head_->next;
+        Node<Type>* front = head_->next;
         do{
-            node = head_->next;
             if(head_ == tail_)
                 return false;
-        }(!__sync_bool_compare_and_swap(head_->next, node, node->next));
-        *res = node->val;
-        delete node;
+            front = head_->next;
+        }while(!__sync_bool_compare_and_swap(&(head_->next), front, front->next));
+        *res = front->val;
+        delete front;
         return true;
     }
 

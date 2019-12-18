@@ -2,7 +2,7 @@
  * Author        : RaKiRaKiRa
  * Email         : 763600693@qq.com
  * Create time   : 2019-12-13 00:38
- * Last modified : 2019-12-13 23:57
+ * Last modified : 2019-12-15 00:20
  * Filename      : 
  * Description   : 
  **********************************************************/
@@ -70,6 +70,7 @@ public:
         while(it != ObserverList->end())
         {
             std::shared_ptr<Observer> sit(it->lock());
+            // 存在则通知，不存在则删除
             if(sit)
             {
                 sit->update();
@@ -77,14 +78,14 @@ public:
             }
             else
             {
-                it = ObserverList->erase(it);
-                unregist(*it);
+                //it = ObserverList->erase(it);
+                unregist(*it++);
             }
         }
     }
 private:
     pthread_mutex_t mutex_;
-    std::shared_ptr<std::list<std::weak_ptr<Observer> > > ObserverList_;
+    std::shared_ptr<std::list<std::weak_ptr<Observer> > > ObserverList_; //队列用list存储观察者指针
 };
 
 #endif

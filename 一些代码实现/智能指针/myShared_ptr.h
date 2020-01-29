@@ -13,6 +13,7 @@
 template<typename T>
 class mySharedPtr
 {
+	friend class mySharedPtr<T>;
 public:
     mySharedPtr(): 
         count_(NULL), 
@@ -24,8 +25,8 @@ public:
         obj_(obj)
     {}
 
-    mySharedPtr<T>(mySharedPtr<T>& ptr):
-        count_(ptr.countPtr()),
+    mySharedPtr(mySharedPtr& ptr):
+        count_(ptr.count_),
         obj_(ptr.get())
     {
         ++(*count_);
@@ -33,9 +34,14 @@ public:
 
     mySharedPtr& operator=(const mySharedPtr& rhs)
     {
-        ++(*count_);
-        count_ = rhs.countPtr();
+        --(*count_);
+        if((*count_) == 0)
+        {
+        	delete obj_;
+        }
+        count_ = rhs.count_;
         obj_   = rhs.get();
+        ++(*count);
     }
 
     // 重点！！！
@@ -70,9 +76,27 @@ public:
         return obj_;
     }
 
-    std::atomic<int>* countPtr() const
+    void reset()
     {
-        return count_;
+    	 --(*count_);
+        if(*count_ == 0)
+        {
+            delete count_;
+            delete obj_;
+        }
+        count_ = NULL;
+        obj_   = NULL;
+    }
+    void reset(T* obj)
+    {
+    	 --(*count_);
+        if(*count_ == 0)
+        {
+            delete count_;
+            delete obj_;
+        }
+        count_ = new std::atomic<int>(1);
+        obj_   = obj;
     }
 private: 
     std::atomic<int>* count_;

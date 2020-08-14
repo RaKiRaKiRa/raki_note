@@ -7,26 +7,24 @@
  * Description   : 
  **********************************************************/
 #include <assert.h>
-char* myStrcpy(char* dst, const char* src)
+void myStrcpy(char* dst, const char* src)
 {
-    assert(dst && src);
-    int len = 0;
-    const char* tmp = src;
-    while(*tmp != '\0')
-    {
-        ++tmp;
-        ++len;
-    }
-    char* res = dst;
-
-	if(dst > res)
+	if(dst > src)
 	{
-		dst += len;
+		int len = 0;
+	    const char* tmp = src;
+	    while(*tmp != '\0')
+	    {
+	        ++tmp;
+	        ++len;
+	    }
+	    char* res = dst;
+		res += len;
 		src += len;
 		++len;
 		while(len--)
 		{
-			*dst-- = *src--;
+			*res-- = *src--;
 		}
 	}
 	else
@@ -34,5 +32,5 @@ char* myStrcpy(char* dst, const char* src)
 		while((*dst++ = *src++) != '\0');
 	}
 
-    return res;
+    
 }

@@ -30,7 +30,10 @@ public:
     {
         for(int i = 0; i < threadNum_; ++i)
         {
-            if(pthread_create(&threadList_[i], NULL, threadRun, (void*)this));
+            if(!pthread_create(&threadList_[i], NULL, threadRun, (void*)this))
+            {
+            	printf("error");
+            }
         }
     }
 

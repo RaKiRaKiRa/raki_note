@@ -41,18 +41,20 @@ public:
         do{
             while(tail->next != NULL)
                 tail = tail->next;
-        }while(!__sync_bool_compare_and_swap(&(p->next), NULL, node));
-        __sync_bool_compare_and_swap(&(tail_), p, node);
+        }while(!__sync_bool_compare_and_swap(&(tail->next), NULL, node));
+        __sync_bool_compare_and_swap(&(tail_), tail, node);
     }
 
     bool pop(Type *res)
     {
         Node<Type>* front = head_->next;
         do{
+        	front = head_->next;
             if(head_ == tail_)
                 return false;
-            front = head_->next;
+            __sync_bool_compare_and_swap(&tail_, front, head_);
         }while(!__sync_bool_compare_and_swap(&(head_->next), front, front->next));
+        
         *res = front->val;
         delete front;
         return true;

@@ -10,7 +10,7 @@
 
 ###  4. **ET LE?**
 ​	epoll把epoll实例创建、events增删改还有events轮询都分开了，这样的话epoll实例就可以被同一个进程中的所有线程共享。epoll跟poll一样，使用链表节点记录监听events，但是它有三个链表型结构（就绪链表、辅助链表、红黑树），首先想**要监听的events的节点被放到红黑树里**，这样可以加快events节点的访问。**events就绪之后会被挂载到就绪链表里去**。ep_send_events_proc中，当epoll_wait**从内核空间向用户空间写出就绪events的时候，会遍历就绪链表并获取发生的关心的events**，没有关心的events发生则无视（**所以LT中处理完成的事件不会使得epoll_wait返回**）。同时这个时候可能还会发生新的就绪events，这个时候已就绪的events不再添加到就绪链表里去，而是使用辅助链表**eventpoll.ovflist**... 
-​	在epoll_wait调用中，epoll会**遍历就绪队列**里的每一个events节点，然后通过**文件的poll方法**再次获取事件的**最新状态revents**，然后把**该events节点从就绪链表中删除**。当revents中包含我们关心的事件events的话，**LT模式还会把该节点重新加入到就绪队列里**，而ET模式也就是edge边界模式不会。这么做有什么影响呢，emmm...让我举个例子，假设我们监听一个管道可读，当事件就绪之后，我们只读了部分内容，还有部分内容没有读。**当我们再次epoll_wait的时候，对LT模式来说，就绪队列里还有这个事件的节点，再次获取状态，对！还是可读的，所以还是不从就绪队列里删除，然后返回这个这个事件**；对ET模式来说，就绪队列里没有这个事件的节点了，所以也就不会再对它进行通知了。
+​	在epoll_wait调用中，epoll会先遍历就绪队列**里的每一个events节点，然后通过**文件的poll方法**再次获取事件的**最新状态revents**，然后把**该events节点从就绪链表中删除**。当revents中包含我们关心的事件events的话，**LT模式还会把该节点重新加入到就绪队列（辅助链表）里**，而ET模式也就是edge边界模式不会。这么做有什么影响呢，emmm...让我举个例子，假设我们监听一个管道可读，当事件就绪之后，我们只读了部分内容，还有部分内容没有读。**当我们再次epoll_wait的时候，对LT模式来说，就绪队列里还有这个事件的节点，再次获取状态，对！还是可读的，所以还是不从就绪队列里删除，然后返回这个这个事件**；对ET模式来说，就绪队列里没有这个事件的节点了，所以也就不会再对它进行通知了。
 
 那LT模式中的这个事件节点什么时候被删除呢，**假设第一次epoll_wait的时候，我们把管道里的内容全部读完了，再最后一次epoll_wait返回时仍会放回就绪链表，但下次epoll_wait返回前遍历到这个节点然后重新获取它的状态的时候，它已经不再就绪了，因为管道空了**，**这个时候LT模式就不会再把这个节点重新添加到就绪队列里了，这时若没有其他事件，epoll_wait并不会返回，仅仅是在内核中有一些处理**。
 即如果是LT模式，那么每次向用户交付events之后，再次把该epitem挂载到eventpoll中的就绪队列上，下一次epoll_wait()时不休眠直接进入到ep_send_events_proc()中来，通过获取资源文件的最新状态然后与我们关心的events比较：
@@ -20,7 +20,6 @@
 
 **ET不一定会效率高**，比如在read一个管道时，需要用while包裹起来保证一次全部读完直到EAGAIN，这样导致在**一次能read完的情况下多read一次**。
 我使用了LT模式。
-ET不一定会效率高，比如在read一个管道时，需要用while包裹起来保证一次全部读完直到EAGAIN，这样导致在一次能read完的情况下多read一次。
 
 ### epoll ? select?
 
@@ -29,7 +28,7 @@ ET不一定会效率高，比如在read一个管道时，需要用while包裹起
  		epoll能支持的文件描述符数很大，可以上万，他的高效由3个部分组成：红黑树、双向链表、回调函数，每次将监听事件拷贝到内核后就存放在红黑树种，以EventPoll的结构体存在，如果有相应的事件发生，对应的回调函数就会触发，进而就会将该事件拷贝至双向链表中返回，而且，**epoll每次返回的都是有事件发生的事件，不是所有事件，所以比较高效**，总的来说epoll适用于连接数较多，活跃数较少的场景、而select适用于连接数不多，但大多都活跃的场景。
 
 ### 5. 粘包
-TCP粘包**： TCP粘包是指发送方发送的若干包数据到接收方接收时粘成一包，从接收缓冲区看，后一包数据的头紧接着前一包数据的尾。socket读取时，读到了实际意义上的两个或多个数据包的内容，同时将其作为一个数据包进行处理。
+TCP粘包**： TCP粘包是指发送方发送的若干包数据到接收方接收时粘成一包，从接收缓冲区看，后一包数据的头紧接着前一包数据的尾。socket读取时，读到了实际意义上的两个或多个数据包的内容，同时将其作为一个数据包进行处理。（TCP是基于流传输，UDP是基于包传输）
 **TCP拆包：**socket读取时，没有完整地读取一个数据包，只读取一部分。**
 *（1）发送方原因*
   我们知道，TCP默认会使用**Nagle算法**。而Nagle算法主要做两件事：
@@ -262,7 +261,7 @@ sizeof指针得到的是指针类型的大小，sizeof引用得到的是它所�
 
 ###  **3. new和delete是如何实现的，new 与 malloc的异同处**
 
-答题思路：区别（构造，异常，new是操作符malloc是库函数），new实现，ptmalloc实现
+答题思路：区别（构造，异常，new是操作符malloc是库函数），new实现，ptmalloc实现,go看jcmalloc
 
 答：都可以用来在堆上分配和回收空间。new和delete是操作符，malloc和free是函数。
 **1）new 和delete：**
@@ -350,10 +349,11 @@ static成员变量与static全局变量相比：
   1）**const全局变量**：该变量在**常量存储区（.rodata gcc）**分配内存，需要在定义时进行初始化且不能改变，有时编译器将简单的const全局变量直接写入符号表中，不分配内存，更加高效。另外，const全局变量也是在文件的**内部使用**（**相当于加上static**），如果想要被外部文件使用，const全局变量**可以在前面加上extern**来完成，static不允许。
   2）**const局部变量**：该变量存放在**栈区**当中，const对编译器进行了约束，约束编译器在局部变量的生存周期中不允许对其进行改变。
   3）**const成员变量**：const成员变量，只在某个对象生命周期内是常量，而对于整个类而言却是可以改变的。因为类可以创建多个对象，不同的对象其const数据成员的值可以不同。所以不能在类的声明中初始化const数据成员，因为类的对象没有被创建时，编译器不知道const数据成员的值是什么。const数据成员的**初始化只能在类的构造函数的初始化列表中进行**。
-  4）**const成员函数**：const成员函数的主要目的是**防止成员函数修改对象的内容**。要注意，const关键字和static关键字对于成员函数来说是不可以同时使用的，因为static关键字修饰静态成员函数不含有this指针，即不能实例化，const成员函数又必须具体到某一个函数。**他的实现方式是传入一个指向const对象的const指针。**
+  4）**const成员函数**：const成员函数的主要目的是**防止成员函数修改对象的内容**， **实际是对this加const**。要注意，const关键字和static关键字对于成员函数来说是不可以同时使用的，因为static关键字修饰静态成员函数不含有this指针，即不能实例化，const成员函数又必须具体到某一个函数。**他的实现方式是传入一个指向const对象的const指针。**
+
 
 ### 11. **extern 与 extern “C”**
-extern可以置于变量或者函数前，以标示变量或者函数的定义在别的文件中，提示编译器遇到此变量和函数时在其他模块中寻找其定义。此外extern也可用来进行链接指定。也就是说extern有两个作用
+extern可以置于变量或者函数前，以标示变量或者函数的定义在别的文件中（未解决符号表），提示编译器遇到此变量和函数时在其他模块中寻找其定义。此外extern也可用来进行链接指定。也就是说extern有两个作用
 第一个,**当它与"C"一起连用时**， C++语言在编译的时候为了解决函数的多态问题，**会将函数名和参数联合起来生成一个中间的函数名称**，而C语言则不会，因此会造成链接时找不到对应函数的情况，此时C函数就需要用extern “C”进行链接指定，**使用C的方式来处理函数**，如: extern "C" void fun(int a, int b);
 第二，当extern不与"C"在一起修饰变量或函数时，如在头文件中: extern int g_Int; **它的作用就是声明函数或全局变量的作用范围的关键字，其声明的函数和变量可以在本模块或其他模块中使用**，记住它是一个声明不是定义!也就是说B模块(编译单元)要是引用模块(编译单元)A中定义的全局变量或函数时，它只要包含A模块的头文件即可,在编译阶段，模块B虽然找不到该函数或变量，但它不会报错，它会在连接时从模块A生成的目标代码中找到此函数。 **extern 表明该变量在别的地方已经定义过了,在这里要使用那个变量.**
 
@@ -418,8 +418,13 @@ rehash和hash都是用头插法。
 unordered_map底层是用**hash表**实现的，通过把一个key映射到hash表中的一个位置来存取value值。因此，unordered_map的元素是无序的。但因为内部实现了hash表，因此**查找速度是非常快**的，但是hash表的**建立比较费**时。即unordered_map对于查找问题会更高效一些。
 STL中的map底层是用**红黑树**实现的，由于红黑树具有自动排序的功能，所以map中的元素是有序的，这也是map的最大优点。内部实现一个红黑树，使得map的很多操作在logn的时间复杂度下就可以实现，因此效率也很高。但是也正因为使用了红黑树，每一个节点需要额外保存父节点，孩子节点以及颜色性质等信息，使得每一个节点都**占用大量的空间**。即map在**有顺序要求**的问题中，更加有效。（红黑树回答特点即可，见算法）
 
+1. 根节点和叶节点（NULL） 都是黑色 
+2. 红色的父子都是黑色
+3. 从根节点到每一个叶子节点的黑节点数量相同
+4. 最大旋转：次数增2删3
+
 ### 18.**STL中vector的实现，容量扩展方法,为何这样设计**
-Vector是动态空间，随着元素的加入，它的内部机制会**自行扩充空间**以容纳新元素。vector维护的是一个**连续的线性空间**，而且**普通指针**就可以满足要求作为vector的迭代器（RandomAccessIterator）。vector的数据结构中其实就是三个迭代器构成的，一个指向目前使用空间头的start，一个指向目前使用空间尾的finish，一个指向目前可用空间尾的end_of_storage。当有新的元素插入时，如果目前容量够用则直接插入，如果容量不够，则容量扩充至两倍(gcc)或1.5倍(vs)，如果两倍容量不足，就扩张至足够大的容量。扩充的过程=是**重新申请一块连续空间**，将原有的数据拷贝到新空间中，再释放原有空间，完成一次扩充。需要注意的是，每次扩充是重新开辟的空间，所以扩充后，**原有的迭代器将会失效**。
+Vector是动态空间，随着元素的加入，它的内部机制会**自行扩充空间**以容纳新元素。vector维护的是一个**连续的线性堆空间**，而且**普通指针**就可以满足要求作为vector的迭代器（RandomAccessIterator）。vector的数据结构中其实就是三个迭代器构成的，一个指向目前使用空间头的start，一个指向目前使用空间尾的finish，一个指向目前可用空间尾的end_of_storage。当有新的元素插入时，如果目前容量够用则直接插入，如果容量不够，则容量扩充至两倍(gcc)或1.5倍(vs)，如果两倍容量不足，就扩张至足够大的容量。扩充的过程=是**重新申请一块连续空间**，将原有的数据拷贝到新空间中，再释放原有空间，完成一次扩充。需要注意的是，每次扩充是重新开辟的空间，所以扩充后，**原有的迭代器将会失效**。
 **1）为什么是成倍增长，而不是每次增长一个固定大小的容量呢？**
 如果已**成倍方式增长**。假定有 n 个元素,倍增因子为 m；需要重新分配内存的次数大约为 logm(n)； 第 i 次重新分配将会导致复制 m^i(也就是当前的vector.size() 大小)个旧空间中元素; n 次 push_back 操作所花费的时间复制度为O(n)，具体分配内存次数是
 $$
@@ -430,7 +435,7 @@ $$
 \sum_{i=1}^{n/k} ki \approx \frac{n^2}{2}
 $$
 
- **2) 为什么是以 2 倍或者 1.5 倍增长，**
+​	 **2) 为什么是以 2 倍或者 1.5 倍增长，**
   ![](media/image8.png)
   可以看到，k = 1.5 在几次扩展之后，可以重用之前的内存空间。2比1.5好处是我只分配一次，可以管好久。即新分配次数少。
 
@@ -494,8 +499,7 @@ $$
 ### 24. **C++虚函数相关（虚函数表，虚函数指针），虚函数的实现原理（热门，重要）**
 首先我们来说一下，C++中多态的**表象**，在基类的函数前加上virtual关键字，在派生类中重写该函数，**运行时**将会根据对象的实际类型来调用相应的函数。如果对象类型是派生类，就调用派生类的函数，如果是基类，就调用基类的函数。实际上，当一个类中包含虚函数时，编译器会为该类生成一个**虚函数表，保存该类中虚函数的地址**，同样，派生类继承基类，派生类中自然一定有虚函数，所以编译器也会为派生类生成自己的虚函数表。当我们定义一个派生类对象时，编译器检测该类型有虚函数，所以为这个派生类**对象生成一个虚函数指针**，**指向该类型的虚函数表**，这个虚函数指针的**初始化在构造函数**中完成的。后续如果有一个基类类型的指针，指向派生类，那么当调用虚函数时，从对象的前4个字节中取虚表地址，根据所指真正对象的虚函数表指针去寻找虚函数的地址，也就可以调用派生类的虚函数表中的虚函数。以此实现多态。
 
-**（※）构造函数执行流程**：父类虚表指针->父类构造函数初始化列表->父类this指针->父类构造函数体->
-				派生类虚表指针->派生类构造函数初始化列表->派生类this指针->派生类构造函数体
+**（※）构造函数执行流程**：父类构造函数->初始化虚表指针->构造函数初始化列表->派生类this指针->派生类构造函数体
 
 **可以看到this指针在初始化列表之后才初始化，所以初始化列表不可以使用this指针**
 
@@ -673,106 +677,107 @@ c)使用free或delete释放了内存之后，没有将指针设置为NULL，导�
 
 ###   38. 手写实现智能指针类
 
-      ```cpp
-      //  引用计数器类  用于存储指向同一对象的指针数
-      template<typename T>
-      class Counter
-      {
-      private:
-      	//  数据成员
-      	T* ptr;    //  对象指针
-      	int cnt;   //  引用计数器
-      	//  友元类声明
-      	template<typename T>
-      	friend class SmartPtr;
-      	//  成员函数
-      	//  构造函数
-      	Counter(T* p)   //  p为指向动态分配对象的指针
-      	{
-      		ptr = p;
-      		cnt = 1;
-      	}
-      	//  析构函数
-      	~Counter()
-      	{
-      		delete ptr;
-      	}
-      };
-      
-      //  智能指针类  
-      template<typename T>
-      class SmartPtr
-      {
-      private:
-      	//  数据成员
-      	T* ptr;
-      	Counter<T>* ptr_cnt;
-      
-      public:
-      	//  普通构造函数  初始化计数类
-      	SmartPtr(T* p) : ptr(p), ptr_cnt(new Counter<T>(p))
-      	{
-      	}
-      	//  拷贝构造函数
-      	SmartPtr(const SmartPtr& other) : ptr(other.ptr), ptr_cnt(other.ptr_cnt)
-      	{
-      		ptr_cnt->cnt++;
-      	}
-      	//  移动构造函数
-      	SmartPtr(SmartPtr&& other) : 
-          	ptr(std::move(other.ptr)), 
-          	ptr_cnt(std::move(other.ptr_cnt))
-      	{
-      		other.ptr_cnt = nullptr;
-      	}
-      
-      	//  赋值重载
-      	SmartPtr& operator=(const SmartPtr& rhs)
-      	{
-      		if (ptr_cnt != rhs.ptr_cnt)
-      		{
-      			if (ptr_cnt != nullptr)
-      			{
-      				ptr_cnt->cnt--;
-      				if (ptr_cnt->cnt == 0)
-      					delete ptr_cnt;
-      			}
-      			ptr = rhs.ptr;
-      			ptr_cnt = rhs.ptr_cnt;
-      			rhs.ptr_cnt->cnt++;
-      		}
-      		return *this;
-      	}
-      
-      	// 移动赋值重载	
-      	SmartPtr& operator=(SmartPtr && rhs)
-      	{
-      		if (ptr_cnt != rhs.ptr_cnt)
-      		{
-      			std::swap(this, rhs);
-      		}
-      		return *this;
-      	}
-      
-      	//  析构函数
-      	~SmartPtr()
-      	{
-      		if (ptr_cnt != nullptr)
-      		{
-      			ptr_cnt->cnt--;
-      			if (ptr_cnt->cnt == 0)
-      				delete ptr_cnt;
-      		}
-      	}
-      
-      	T& operator*()     const { return *(ptr); }
-      	T* operator&()     const { return ptr; }
-      	size_t use_count() const { return ptr_cnt->cnt; }
-      	bool unique()      const { return (ptr_cnt->cnt == 1); }
-      	T* get()           const { return ptr; }
-      };
-      
-      ```
+```cpp
+ //  引用计数器类  用于存储指向同一对象的指针数
+  template<typename T>
+  class Counter
+  {
+  private:
+  	//  数据成员
+  	T* ptr;    //  对象指针
+  	int cnt;   //  引用计数器
+  	//  友元类声明
+  	template<typename T>
+  	friend class SmartPtr;
+  	//  成员函数
+  	//  构造函数
+  	Counter(T* p)   //  p为指向动态分配对象的指针
+  	{
+  		ptr = p;
+  		cnt = 1;
+  	}
+  	//  析构函数
+  	~Counter()
+  	{
+  		delete ptr;
+  	}
+  };
+  
+  //  智能指针类  
+  template<typename T>
+  class SmartPtr
+  {
+  private:
+  	//  数据成员
+  	T* ptr;
+  	Counter<T>* ptr_cnt;
+  
+  public:
+  	//  普通构造函数  初始化计数类
+  	SmartPtr(T* p) : ptr(p), ptr_cnt(new Counter<T>(p))
+  	{
+  	}
+  	//  拷贝构造函数
+  	SmartPtr(const SmartPtr& other) : ptr(other.ptr), ptr_cnt(other.ptr_cnt)
+  	{
+  		ptr_cnt->cnt++;
+  	}
+  	//  移动构造函数
+  	SmartPtr(SmartPtr&& other) : 
+      	ptr(std::move(other.ptr)), 
+      	ptr_cnt(std::move(other.ptr_cnt))
+  	{
+  		other.ptr_cnt = nullptr;
+  	}
+  
+  	//  赋值重载
+  	SmartPtr& operator=(const SmartPtr& rhs)
+  	{
+  		if (ptr_cnt != rhs.ptr_cnt)
+  		{
+  			if (ptr_cnt != nullptr)
+  			{
+  				ptr_cnt->cnt--;
+  				if (ptr_cnt->cnt == 0)
+  					delete ptr_cnt;
+  			}
+  			ptr = rhs.ptr;
+  			ptr_cnt = rhs.ptr_cnt;
+  			rhs.ptr_cnt->cnt++;
+  		}
+  		return *this;
+  	}
+  
+  	// 移动赋值重载	
+  	SmartPtr& operator=(SmartPtr && rhs)
+  	{
+  		if (ptr_cnt != rhs.ptr_cnt)
+  		{
+  			std::swap(this, rhs);
+  		}
+  		return *this;
+  	}
+  
+  	//  析构函数
+  	~SmartPtr()
+  	{
+  		if (ptr_cnt != nullptr)
+  		{
+  			ptr_cnt->cnt--;
+  			if (ptr_cnt->cnt == 0)
+  				delete ptr_cnt;
+  		}
+  	}
+  
+  	T& operator*()     const { return *(ptr); }
+  	T* operator&()     const { return ptr; }
+  	size_t use_count() const { return ptr_cnt->cnt; }
+  	bool unique()      const { return (ptr_cnt->cnt == 1); }
+  	T* get()           const { return ptr; }
+  };
+```
+
+
 
 ###   39. **遇到coredump要怎么调试**
 ​	通过gdb对core文件进行分析来查看程序崩溃时的调用栈，来尝试定位问题。
@@ -845,10 +850,14 @@ nullptr 出现的目的是为了**替代NULL**。在某种意义上来说，传�
   ![](media/image40.png)
 
 ##### **3. 区间迭代 ： 基于范围的 for 循环**
-      C++11 引入了基于范围的迭代写法， 最常用的 std::vector 遍历将从原来的样子：
-      ![](media/image41.png)
-      变得非常的简单：
-      ![](media/image42.png)
+
+  C++11 引入了基于范围的迭代写法， 最常用的 std::vector 遍历将从原来的样子：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image41.png)
+  变得非常的简单：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image42.png)
+
+
+
 ##### **4. 初始化列表**（star）
       C++11 提供了统一的语法来**初始化任意的对象**，C++11 还把初始化列表的概念绑定到了类型上，并将其称之为 std::initializer_list，允许构造函数或其他函数像参数一样使用初始化列表，这就为类对象的初始化与普通数组和 POD 的初始化方法提供了统一的桥梁，例如：
       ![](media/image43.png)
@@ -876,45 +885,46 @@ nullptr 出现的目的是为了**替代NULL**。在某种意义上来说，传�
       如果一个继承构造函数不被相关的代码使用，编译器不会为之产生真正的函数代码，这样比透传基类各种构造函数更加节省目标代码空间。
 
 ##### **7. Lambda 表达式**（star）
-      Lambda 表达式，实际上就是提供了一个类似匿名函数的特性，而匿名函数则是在需要一个函数，但是又不想费力去命名一个函数的情况下去使用的。
-      Lambda 表达式的基本语法如下：
-      ![](media/image53.png)
-        1) capture是**捕获列表**； 2) params是**参数表**；(选填) 3) opt是**函数选项**；可以填mutable,exception,attribute（选填）      mutable说明lambda表达式体内的代码可以修改被捕获的变量，并且可以访问被捕获的对象的non-const方法。      exception说明lambda表达式是否抛出异常以及何种异常。      attribute用来声明属性。 4) ret是**返回值类型**（拖尾返回类型）。(选填) 5) body是**函数体**。
-      捕获列表：lambda表达式的捕获列表精细控制了lambda表达式能够访问的外部变量，以及如何访问这些变量。
-        1) []不捕获任何变量。 2) [&amp;]捕获外部作用域中所有变量，并作为引用在函数体中使用（按引用捕获）。 3) [=]捕获外部作用域中所有变量，并作为副本在函数体中使用(按值捕获)。注意值捕获的**前提是变量可以拷贝**，且被捕获的变量在 lambda 表达式**被创建时拷贝**，而非调用时才拷贝。如果希望lambda表达式在调用时能即时访问外部变量，我们应当使用引用方式捕获。
-      ![](media/image54.png)
-        4) [=,&amp;foo]按值捕获外部作用域中所有变量，并按引用捕获foo变量。 5) [bar]按值捕获bar变量，同时不捕获其他变量。 6) [this]捕获当前类中的this指针，让lambda表达式拥有和当前类成员函数同样的访问权限。如果已经使用了&amp;或者=，就默认添加此选项。捕获this的目的是可以在lamda中使用当前类的成员函数和成员变量。
-      ![](media/image55.png)
-      **注意f4**，虽然按值捕获的变量值均复制一份存储在lambda表达式变量中，修改他们也并不会真正影响到外部，但我们却仍然无法修改它们。如果希望去修改按值捕获的外部变量，需要显示指明lambda表达式为mutable。被mutable修饰的lambda表达式就算没有参数也要写明参数列表。
-      原因：**lambda表达式可以说是就地定义仿函数闭包的“语法糖”**。它的捕获列表捕获住的任何外部变量，最终会变为闭包类型的成员变量。按照C++标准**，lambda表达式的operator()默认是const的**，一个const成员函数是无法修改成员变量的值的。而mutable的作用，就在于取消operator()的const。
-      ![](media/image56.png)
-      lambda表达式的大致原理：每当你定义一个lambda表达式后，编译器会自动生成一个**匿名类**（这个类**重载了()运算符**，作为仿函数），我们称为闭包类型（closure type）。那么在运行时，这个lambda表达式就会返回一个匿名的闭包实例，是一个右值。所以，我们上面的lambda表达式的结果就是一个个闭包。对于复制传值捕捉方式，类中会相应添加对应类型的非静态数据成员。在运行时，会用复制的值初始化这些成员变量，从而生成闭包。
-      lambda表达式是不能被赋值的：
-      ![](media/image57.png)
-      闭包类型禁用了赋值操作符，但是没有禁用复制构造函数，所以你仍然可以用一个lambda表达式去初始化另外一个lambda表达式而产生副本。
-      在多种捕获方式中，最好不要使用[=]和[&amp;]默认捕获所有变量。
-      默认引用捕获所有变量，你有很大可能会出现悬挂引用（Dangling references），因为引用捕获不会延长引用的变量的生命周期：
-      ![](media/image58.png)
-      上面函数返回了一个lambda表达式，参数x仅是一个临时变量，函数add_x调用后就被销毁了，但是返回的lambda表达式却引用了该变量，当调用这个表达式时，引用的是一个垃圾值，会产生没有意义的结果。上面这种情况，使用默认传值方式可以避免悬挂引用问题。
-      但是采用默认值捕获所有变量仍然有风险，看下面的例子：
-      ![](media/image59.png)
-      这个类中有一个成员方法，可以返回一个lambda表达式，这个表达式使用了类的数据成员divisor。而且采用默认值方式捕捉所有变量。你可能认为这个lambda表达式也捕捉了divisor的一份副本，但是实际上并没有。因为数据成员divisor对lambda表达式并不可见，你可以用下面的代码验证：
-      // 类的方法，下面无法编译，因为divisor并不在lambda捕捉的范围
-      ![](media/image60.png)
-      原代码中，lambda表达式实际上捕捉的是this指针的副本，所以原来的代码等价于：
-      ![](media/image61.png)
-      尽管还是以值方式捕获，但是捕获的是指针，其实相当于以引用的方式捕获了当前类对象，所以lambda表达式的闭包与一个类对象绑定在一起了，这很危险，因为你仍然有可能在类对象析构后使用这个lambda表达式，那么类似“悬挂引用”的问题也会产生。所以，采用默认值捕捉所有变量仍然是不安全的，主要是由于指针变量的复制，实际上还是按引用传值。
-      lambda表达式可以赋值给对应类型的函数指针。但是使用函数指针并不是那么方便。
-      所以**STL定义在&lt; functional &gt;头文件提供了一个多态的函数对象封装std::function**，其类似于**函数指针**。它可以绑定任何类函数对象，**只要参数与返回类型相同**。如下面的返回一个bool且接收两个int的函数包装器：
-      ![](media/image62.png)
-      lambda表达式一个更重要的应用是其可以用于函数的参数，通过这种方式可以实现回调函数。
-      最常用的是在STL算法中，比如你要统计一个数组中满足特定条件的元素数量，通过lambda表达式给出条件，传递给count_if函数：
-      ![](media/image63.png)
-      再比如你想生成斐波那契数列，然后保存在数组中，此时你可以使用generate函数，并辅助lambda表达式：
-      ![](media/image64.png)
-      当需要遍历容器并对每个元素进行操作时：
-      ![](media/image65.png)
-      大部分STL算法，可以非常灵活地搭配lambda表达式来实现想要的效果。
+Lambda 表达式，实际上就是提供了一个类似匿名函数的特性，而匿名函数则是在需要一个函数，但是又不想费力去命名一个函数的情况下去使用的。
+ Lambda 表达式的基本语法如下：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image53.png)
+ 1) capture是**捕获列表**； 2) params是**参数表**；(选填) 3) opt是**函数选项**；可以填mutable,exception,attribute（选填）      mutable说明lambda表达式体内的代码可以修改被捕获的变量，并且可以访问被捕获的对象的non-const方法。      exception说明lambda表达式是否抛出异常以及何种异常。      attribute用来声明属性。 4) ret是**返回值类型**（拖尾返回类型）。(选填) 5) body是**函数体**。
+  捕获列表：lambda表达式的捕获列表精细控制了lambda表达式能够访问的外部变量，以及如何访问这些变量。
+    1) []不捕获任何变量。 2) [&amp;]捕获外部作用域中所有变量，并作为引用在函数体中使用（按引用捕获）。 3) [=]捕获外部作用域中所有变量，并作为副本在函数体中使用(按值捕获)。注意值捕获的**前提是变量可以拷贝**，且被捕获的变量在 lambda 表达式**被创建时拷贝**，而非调用时才拷贝。如果希望lambda表达式在调用时能即时访问外部变量，我们应当使用引用方式捕获。
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image54.png)
+    4) [=,&amp;foo]按值捕获外部作用域中所有变量，并按引用捕获foo变量。 5) [bar]按值捕获bar变量，同时不捕获其他变量。 6) [this]捕获当前类中的this指针，让lambda表达式拥有和当前类成员函数同样的访问权限。如果已经使用了&amp;或者=，就默认添加此选项。捕获this的目的是可以在lamda中使用当前类的成员函数和成员变量。
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image55.png)
+  **注意f4**，虽然按值捕获的变量值均复制一份存储在lambda表达式变量中，修改他们也并不会真正影响到外部，但我们却仍然无法修改它们。如果希望去修改按值捕获的外部变量，需要显示指明lambda表达式为mutable。被mutable修饰的lambda表达式就算没有参数也要写明参数列表。
+  原因：**lambda表达式可以说是就地定义仿函数闭包的“语法糖”**。它的捕获列表捕获住的任何外部变量，最终会变为闭包类型的成员变量。按照C++标准**，lambda表达式的operator()默认是const的**，一个const成员函数是无法修改成员变量的值的。而mutable的作用，就在于取消operator()的const。
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image56.png)
+  lambda表达式的大致原理：每当你定义一个lambda表达式后，编译器会自动生成一个**匿名类**（这个类**重载了()运算符**，作为仿函数），我们称为闭包类型（closure type）。那么在运行时，这个lambda表达式就会返回一个匿名的闭包实例，是一个右值。所以，我们上面的lambda表达式的结果就是一个个闭包。对于复制传值捕捉方式，类中会相应添加对应类型的非静态数据成员。在运行时，会用复制的值初始化这些成员变量，从而生成闭包。
+  lambda表达式是不能被赋值的：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image57.png)
+  闭包类型禁用了赋值操作符，但是没有禁用复制构造函数，所以你仍然可以用一个lambda表达式去初始化另外一个lambda表达式而产生副本。
+  在多种捕获方式中，最好不要使用[=]和[&amp;]默认捕获所有变量。
+  默认引用捕获所有变量，你有很大可能会出现悬挂引用（Dangling references），因为引用捕获不会延长引用的变量的生命周期：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image58.png)
+  上面函数返回了一个lambda表达式，参数x仅是一个临时变量，函数add_x调用后就被销毁了，但是返回的lambda表达式却引用了该变量，当调用这个表达式时，引用的是一个垃圾值，会产生没有意义的结果。上面这种情况，使用默认传值方式可以避免悬挂引用问题。
+  但是采用默认值捕获所有变量仍然有风险，看下面的例子：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image59.png)
+  这个类中有一个成员方法，可以返回一个lambda表达式，这个表达式使用了类的数据成员divisor。而且采用默认值方式捕捉所有变量。你可能认为这个lambda表达式也捕捉了divisor的一份副本，但是实际上并没有。因为数据成员divisor对lambda表达式并不可见，你可以用下面的代码验证：
+  // 类的方法，下面无法编译，因为divisor并不在lambda捕捉的范围
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image60.png)
+  原代码中，lambda表达式实际上捕捉的是this指针的副本，所以原来的代码等价于：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image61.png)
+  尽管还是以值方式捕获，但是捕获的是指针，其实相当于以引用的方式捕获了当前类对象，所以lambda表达式的闭包与一个类对象绑定在一起了，这很危险，因为你仍然有可能在类对象析构后使用这个lambda表达式，那么类似“悬挂引用”的问题也会产生。所以，采用默认值捕捉所有变量仍然是不安全的，主要是由于指针变量的复制，实际上还是按引用传值。
+  lambda表达式可以赋值给对应类型的函数指针。但是使用函数指针并不是那么方便。
+  所以**STL定义在&lt; functional &gt;头文件提供了一个多态的函数对象封装std::function**，其类似于**函数指针**。它可以绑定任何类函数对象，**只要参数与返回类型相同**。如下面的返回一个bool且接收两个int的函数包装器：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image62.png)
+  lambda表达式一个更重要的应用是其可以用于函数的参数，通过这种方式可以实现回调函数。
+  最常用的是在STL算法中，比如你要统计一个数组中满足特定条件的元素数量，通过lambda表达式给出条件，传递给count_if函数：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image63.png)
+  再比如你想生成斐波那契数列，然后保存在数组中，此时你可以使用generate函数，并辅助lambda表达式：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image64.png)
+  当需要遍历容器并对每个元素进行操作时：
+  ![](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image65.png)
+  大部分STL算法，可以非常灵活地搭配lambda表达式来实现想要的效果。
+
 ##### **8. 新增容器**
       **std::array  ：** std::array 保存在栈内存中，相比堆内存中的 std::vector，我们能够灵活的访问这里面的元素，从而获得更高的性能。
       std::array 会在编译时创建一个固定大小的数组，std::array 不能够被隐式的转换成指针，使用 std::array只需指定其类型和大小即可
@@ -928,51 +938,51 @@ nullptr 出现的目的是为了**替代NULL**。在某种意义上来说，传�
         **![](media/image68.png)**
         代码编译需要使用 -pthread 选项
 #####   **11. 右值引用和move语义**（star）
-        先看一个简单的例子直观感受下：
-        ![](media/image69.png)
-        如果使用以下拷贝构造函数：
-        ![](media/image70.png)
-        以上3行中，只有第一行(line 1)的x深度拷贝是有必要的，因为我们可能会在后边用到x，x是一个左值(lvalues)。
-        第二行和第三行的参数则是右值，因为表达式产生的string对象是匿名对象，之后没有办法再使用了。
-        C++ 11引入了一种新的机制叫做“右值引用”，以便我们通过重载直接使用右值参数。我们所要做的就是写一个以右值引用为参数的构造函数：
-        ![](media/image70.png)
-        我们没有深度拷贝堆内存中的数据，而是仅仅复制了指针，并把源对象的指针置空。事实上，我们“偷取”了属于源对象的内存数据。由于源对象是一个右值，不会再被使用，因此客户并不会觉察到源对象被改变了。在这里，我们并没有真正的复制，所以我们把这个构造函数叫做“转移构造函数”（move constructor），他的工作就是把资源从一个对象转移到另一个对象，而不是复制他们。
-        有了右值引用，再来看看赋值操作符：
-        ![](media/image71.png)
-        注意到我们是直接对参数that传值，所以that会像其他任何对象一样被初始化，那么确切的说，that是怎样被初始化的呢？对于C++ 98，答案是复制构造函数，但是对于C++ 11，编译器会依据参数是左值还是右值在复制构造函数和转移构造函数间进行选择。
-        如果是a=b，这样就会调用复制构造函数来初始化that（因为b是左值），赋值操作符会与新创建的对象交换数据，深度拷贝。这就是copy and swap 惯用法的定义：构造一个副本，与副本交换数据，并让副本在作用域内自动销毁。这里也一样。
-        如果是a = x + y，这样就会调用转移构造函数来初始化that（因为x+y是右值），所以这里没有深度拷贝，只有高效的数据转移。相对于参数，that依然是一个独立的对象，但是他的构造函数是无用的（trivial），因此堆中的数据没有必要复制，而仅仅是转移。没有必要复制他，因为x+y是右值，再次，从右值指向的对象中转移是没有问题的。
-        总结一下：复制构造函数执行的是深度拷贝，因为源对象本身必须不能被改变。而转移构造函数却可以复制指针，把源对象的指针置空，这种形式下，这是安全的，因为用户不可能再使用这个对象了。
-        下面我们进一步讨论右值引用和move语义。
-        C++98标准库中提供了一种唯一拥有性的智能指针std::auto_ptr，该类型在C++11中已被废弃，因为其“复制”行为是危险的。
-        ![](media/image72.png)
-        注意b是怎样使用a进行初始化的，它不复制triangle，而是把triangle的所有权从a传递给了b，也可以说成“a 被转移进了b”或者“triangle被从a转移到了b”。
-        auto_ptr 的复制构造函数可能看起来像这样（简化）：
-        ![](media/image73.png)
-        auto_ptr 的危险之处在于看上去应该是复制，但实际上确是转移。调用被转移过的auto_ptr 的成员函数将会导致不可预知的后果。所以你必须非常谨慎的使用auto_ptr ，如果他被转移过。
-        ![](media/image74.png)
-        显然，在持有auto_ptr 对象的a表达式和持有调用函数返回的auto_ptr值类型的make_triangle()表达式之间一定有一些潜在的区别，每调用一次后者就会创建一个新的auto_ptr对象。这里a 其实就是一个左值（lvalue）的例子，而make_triangle()就是右值（rvalue）的例子。
-        转移像a这样的左值是非常危险的，因为我们可能调用a的成员函数，这会导致不可预知的行为。另一方面，转移像make_triangle()这样的右值却是非常安全的，因为复制构造函数之后，我们不能再使用这个临时对象了，因为这个转移后的临时对象会在下一行之前销毁掉。
-        我们现在知道转移左值是十分危险的，但是转移右值却是很安全的。如果C++能从语言级别支持区分左值和右值参数，我就可以完全杜绝对左值转移，或者把转移左值在调用的时候暴露出来，以使我们不会不经意的转移左值。
-        C++ 11对这个问题的答案是右值引用。右值引用是针对右值的新的引用类型，语法是X&amp;&amp;。以前的老的引用类型X&amp; 现在被称作左值引用。
-        使用右值引用X&amp;&amp;作为参数的最有用的函数之一就是转移构造函数X::X(X&amp;&amp; source)，它的主要作用是把源对象的本地资源转移给当前对象。
-        C++ 11中，std::auto_ptr&lt; T &gt;已经被std::unique_ptr&lt; T &gt;所取代，后者就是利用的右值引用。
-        其转移构造函数：
-        ![](media/image75.png)
-        这个转移构造函数跟auto_ptr中复制构造函数做的事情一样，但是它却只能接受右值作为参数。
-        ![](media/image76.png)
-        第二行不能编译通过，因为a是左值，但是参数unique_ptr&amp;&amp; source只能接受右值，这正是我们所需要的，杜绝危险的隐式转移。第三行编译没有问题，因为make_triangle()是右值，转移构造函数会将临时对象的所有权转移给对象c，这正是我们需要的。
-        **转移左值**
-        有时候，我们可能想转移左值，也就是说，有时候我们想让编译器把左值当作右值对待，以便能使用转移构造函数，即便这有点不安全。出于这个目的，C++ 11在标准库的头文件&lt; utility &gt;中提供了一个模板函数std::move。实际上，std::move仅仅是简单地将左值转换为右值，它本身并没有转移任何东西。它仅仅是让对象可以转移。
-        以下是如何正确的转移左值：
-        ![](media/image77.png)
-        请注意，第三行之后，a不再拥有Triangle对象。不过这没有关系，因为通过明确的写出std::move(a)，我们很清楚我们的意图：亲爱的转移构造函数，你可以对a做任何想要做的事情来初始化c；我不再需要a了，对于a，您请自便。
-        当然，**如果你在使用了mova(a)之后，还继续使用a，那无疑是搬起石头砸自己的脚**，还是会导致严重的运行错误。
-        总之，std::move(some_lvalue)将左值转换为右值（可以理解为一种类型转换），使接下来的转移成为可能。
-        一个例子：
-        ![](media/image78.png)
-        上面的parameter，其类型是一个右值引用，只能说明parameter是指向右值的引用，而parameter本身是个左值。（Things that are declared as rvalue reference can be lvalues or rvalues. The distinguishing criterion is: if it has a name, then it is an lvalue. Otherwise, it is an rvalue.）
-        因此以上对parameter的转移是不允许的，需要使用std::move来显示转换成右值。
+先看一个简单的例子直观感受下：
+    ![](media/image69.png)
+    如果使用以下拷贝构造函数：
+    ![](media/image70.png)
+    以上3行中，只有第一行(line 1)的x深度拷贝是有必要的，因为我们可能会在后边用到x，x是一个左值(lvalues)。
+    第二行和第三行的参数则是右值，因为表达式产生的string对象是匿名对象，之后没有办法再使用了。
+    C++ 11引入了一种新的机制叫做“右值引用”，以便我们通过重载直接使用右值参数。我们所要做的就是写一个以右值引用为参数的构造函数：
+    ![](media/image70.png)
+    我们没有深度拷贝堆内存中的数据，而是仅仅复制了指针，并把源对象的指针置空。事实上，我们“偷取”了属于源对象的内存数据。由于源对象是一个右值，不会再被使用，因此客户并不会觉察到源对象被改变了。在这里，我们并没有真正的复制，所以我们把这个构造函数叫做“转移构造函数”（move constructor），他的工作就是把资源从一个对象转移到另一个对象，而不是复制他们。
+    有了右值引用，再来看看赋值操作符：
+    ![](media/image71.png)
+    注意到我们是直接对参数that传值，所以that会像其他任何对象一样被初始化，那么确切的说，that是怎样被初始化的呢？对于C++ 98，答案是复制构造函数，但是对于C++ 11，编译器会依据参数是左值还是右值在复制构造函数和转移构造函数间进行选择。
+    如果是a=b，这样就会调用复制构造函数来初始化that（因为b是左值），赋值操作符会与新创建的对象交换数据，深度拷贝。这就是copy and swap 惯用法的定义：构造一个副本，与副本交换数据，并让副本在作用域内自动销毁。这里也一样。
+    如果是a = x + y，这样就会调用转移构造函数来初始化that（因为x+y是右值），所以这里没有深度拷贝，只有高效的数据转移。相对于参数，that依然是一个独立的对象，但是他的构造函数是无用的（trivial），因此堆中的数据没有必要复制，而仅仅是转移。没有必要复制他，因为x+y是右值，再次，从右值指向的对象中转移是没有问题的。
+    总结一下：复制构造函数执行的是深度拷贝，因为源对象本身必须不能被改变。而转移构造函数却可以复制指针，把源对象的指针置空，这种形式下，这是安全的，因为用户不可能再使用这个对象了。
+    下面我们进一步讨论右值引用和move语义。
+    C++98标准库中提供了一种唯一拥有性的智能指针std::auto_ptr，该类型在C++11中已被废弃，因为其“复制”行为是危险的。
+    ![](media/image72.png)
+    注意b是怎样使用a进行初始化的，它不复制triangle，而是把triangle的所有权从a传递给了b，也可以说成“a 被转移进了b”或者“triangle被从a转移到了b”。
+    auto_ptr 的复制构造函数可能看起来像这样（简化）：
+    ![](media/image73.png)
+    auto_ptr 的危险之处在于看上去应该是复制，但实际上确是转移。调用被转移过的auto_ptr 的成员函数将会导致不可预知的后果。所以你必须非常谨慎的使用auto_ptr ，如果他被转移过。
+    ![](media/image74.png)
+    显然，在持有auto_ptr 对象的a表达式和持有调用函数返回的auto_ptr值类型的make_triangle()表达式之间一定有一些潜在的区别，每调用一次后者就会创建一个新的auto_ptr对象。这里a 其实就是一个左值（lvalue）的例子，而make_triangle()就是右值（rvalue）的例子。
+    转移像a这样的左值是非常危险的，因为我们可能调用a的成员函数，这会导致不可预知的行为。另一方面，转移像make_triangle()这样的右值却是非常安全的，因为复制构造函数之后，我们不能再使用这个临时对象了，因为这个转移后的临时对象会在下一行之前销毁掉。
+    我们现在知道转移左值是十分危险的，但是转移右值却是很安全的。如果C++能从语言级别支持区分左值和右值参数，我就可以完全杜绝对左值转移，或者把转移左值在调用的时候暴露出来，以使我们不会不经意的转移左值。
+    C++ 11对这个问题的答案是右值引用。右值引用是针对右值的新的引用类型，语法是X&amp;&amp;。以前的老的引用类型X&amp; 现在被称作左值引用。
+    使用右值引用X&amp;&amp;作为参数的最有用的函数之一就是转移构造函数X::X(X&amp;&amp; source)，它的主要作用是把源对象的本地资源转移给当前对象。
+    C++ 11中，std::auto_ptr&lt; T &gt;已经被std::unique_ptr&lt; T &gt;所取代，后者就是利用的右值引用。
+    其转移构造函数：
+    ![](media/image75.png)
+    这个转移构造函数跟auto_ptr中复制构造函数做的事情一样，但是它却只能接受右值作为参数。
+    ![](media/image76.png)
+    第二行不能编译通过，因为a是左值，但是参数unique_ptr&amp;&amp; source只能接受右值，这正是我们所需要的，杜绝危险的隐式转移。第三行编译没有问题，因为make_triangle()是右值，转移构造函数会将临时对象的所有权转移给对象c，这正是我们需要的。
+    **转移左值**
+    有时候，我们可能想转移左值，也就是说，有时候我们想让编译器把左值当作右值对待，以便能使用转移构造函数，即便这有点不安全。出于这个目的，C++ 11在标准库的头文件&lt; utility &gt;中提供了一个模板函数std::move。实际上，std::move仅仅是简单地将左值转换为右值，它本身并没有转移任何东西。它仅仅是让对象可以转移。
+    以下是如何正确的转移左值：
+    ![](media/image77.png)
+    请注意，第三行之后，a不再拥有Triangle对象。不过这没有关系，因为通过明确的写出std::move(a)，我们很清楚我们的意图：亲爱的转移构造函数，你可以对a做任何想要做的事情来初始化c；我不再需要a了，对于a，您请自便。
+    当然，**如果你在使用了mova(a)之后，还继续使用a，那无疑是搬起石头砸自己的脚**，还是会导致严重的运行错误。
+    总之，std::move(some_lvalue)将左值转换为右值（可以理解为一种类型转换），使接下来的转移成为可能。
+    一个例子：
+    ![](media/image78.png)
+    上面的parameter，其类型是一个右值引用，只能说明parameter是指向右值的引用，而parameter本身是个左值。（Things that are declared as rvalue reference can be lvalues or rvalues. The distinguishing criterion is: if it has a name, then it is an lvalue. Otherwise, it is an rvalue.）
+    因此以上对parameter的转移是不允许的，需要使用std::move来显示转换成右值。
 
 ### 44. **C++的调用惯例（简单一点C++函数调用的压栈过程）**
       在不指定调用惯例的情况下，默认使用cdecl调用惯例。
@@ -2033,6 +2043,10 @@ PUT所对应的URI是要创建或更新的资源本身。比如：PUT http://www
 
 ### 53. **DNS怎么回事，如何查找对应的IP地址。DNS用什么协议。广播是怎么回事？**
 
+一个UDP协议，先在浏览器缓存查IP，再通过系统调用查系统缓存，再查路由缓存，再问运营商。
+
+都没有则访问根地址。
+
 ### 54. **Cookie与session**
 
 
@@ -2042,6 +2056,13 @@ PUT所对应的URI是要创建或更新的资源本身。比如：PUT http://www
 1. so_reuseaddr可以，一次只苏醒一个进程的accept，内核解决了惊群；
 2. 先绑定fd再fork也可以
 3. ip通过五元组（源ip 目的ip 源端口 目的端口 协议），故可以udp和tcp监听同一个端口
+
+### 56. Reuseport, reuseaddr
+
+reuseport是一种套接字复用机制，在新老进程同时存在的时候，reusePort允许多个套接字使用同一个IP地址/端口，TCP握手前reusePort会根据ip五元组讲连接Hash到一个其中一个套接字上，这样两个NSS进程都可以处理新连接，就不需要将端口断开即可实现升级。
+
+1. SO_REUSEADDR和SO_REUSEPORT都可以实现绑定处于TIME_WAIT状态的套接字地址。
+2. SO_REUSEADDR不允许TCP的完全重复绑定，即多个套接字绑定到同一ip:port，而SO_REUSEPORT允许。
 
 ## 3数据库（MySQL）
 
@@ -3424,135 +3445,198 @@ IO分两阶段：
 
 ### 14、redis主从复制，主从切换，集群
 
-# 内核（乱，大多合并至4,5）
-  1. 内存管理：
-1.内存的硬件访问原理及分页管理（mmu、页表、ZONE、Buddy、CMA）
-2.内存的动态申请与释放（slab、kmalloc、vmalloc、malloc、Lazy分配机制、free）
-3.进程的内存消耗与泄露（VMA、vss、uss、pss、rss、pagefault、OOM、内存泄露怎么检测以及处理）
-4.内存与io的交换（pagecache、free命令、read/write/mmap、file-backed页面/匿名页、swap、LRU）
-5.内存工程上的优化（DMA与cache的一致性、进程的cgroup、内存的cgroup、dirty页的回收、内存的回收、swappniess、getdelays、vmstat工具）
 
-  一.内存的硬件访问原理及分页管理（mmu、页表、ZONE、Buddy、CMA）
-1.cpu如何访问到内存？
-2.mmu的作用？
-3.页表的内容？
-4.物理内存分为几个zone?为什么要分zone？
-5.什么是buddy算法？buddy算法有哪些问题？怎么查看buddy管理的物理内存资源？
-6.什么是CMA算法？
-7.内存是按页管理的，文件系统是按block管理的，buddy算法适用于每个zone，用于管理空闲页面，zone是物理内存的概念。
-8.为什么要分用户空间和内核空间？
-9.进程只需要虚拟地址连续，物理地址连不连续无所谓，但DMA对连续有要求。
 
-  二.内存的动态申请与释放（slab、kmalloc、vmalloc、malloc、free、Lazy分配机制、OOM）
-1.slab是什么？为什么要有slab?和buddy什么关系？malloc与buddy的关系？怎么查看slab为内核提前分配的内存？举例子
-2.kmalloc、vmalloc、malloc的区别？页表什么时候建立？从哪个zone拿内存？分别映射到哪里？vmalloc映射区的作用？怎么看vmalloc映射区？
-3.lazy行为是什么？适用于哪些场景？为什么要有lazy？lazy不止针对于应用的堆，还包括代码段、数据段等。
-4.什么是OOM？出现OOM，内核怎么处理？怎么查看进程的oom_score?
-5.mallopt函数作用？
-6.映射讲的是建立页表关系，占用讲的是内存命中。
-7.malloc基于brk、mmap系统调用。
+## Go
 
-  三.进程的内存消耗与泄露（VMA、vss、uss、pss、rss、pagefault、内存泄露怎么检测以及处理）
-1.进程的VMA是什么？
-2.一个进程究竟消耗了多少内存?vss、rss、uss、pss?怎么查看？pmap pid cat /proc/pid/maps or smaps smem
-3.malloc成功后并未拿到内存（lazy行为），但对进程产生了什么影响？VMA+页表
-4.一个进程的内存消耗从来不说进程在内核空间的消耗，而是在虚拟地址空间0-3g对应的物理内存的那部分消耗。
-5.内存如何被多个进程瓜分？图？
-6.pagefault(缺页中断)的三种可能性？major与minor的区别？
-7.应用内存泄露的原因？界定方法？位置的检测方法？
 
-  四.内存与io的交换（pagecache、free命令、read/write/mmap、file-backed页面/匿名页、swap、LRU）
-1.lazy行为不仅仅针对堆，代码段、栈等都是边写边pagefault，边写边拿到。
-2.什么是file-backed页面？什么是匿名页？如何在内存与磁盘间交换？
-3.swap什么意思？什么是硬盘的swap分区？
-4.应用程序读写文件的两种方法？区别？过程？read/write/mmap
-5.什么是pagecache,有什么用？pagecache两种形式？buffers cached
-6.free命令的作用？每一项含义？
-7.LRU？最近最少使用原则
-8.嵌入式下不使用swap分区的原因？使用ZRAM的原理？牺牲了什么？
-9.内核2号进程kthreadd进程负责文件系统的页面以及匿名页面的回收，每个zone有3个水位，high、low、min水位，当空闲内存大于high水位时，停止回收，当处于high水位和low水位之间时后台开始慢慢回收，当低于min水位时，内核会堵住应用程序，快速内存回收。
-10.cat/proc/sys/vm/swappiness swappiness 反应是否积极的使用swap空间
 
-  五.内存工程上的优化（DMA与cache的一致性、进程的cgroup、内存的cgroup、dirty页的回收、内存的回收、swappniess、getdelays、vmstat工具）
-1.DMA与cache的一致性指什么？怎么解决？DMA_alloc_coherent(）分配，cache的硬件同步单元
-2.进程的cgroup作用？配置group的优先级、cpu的最大占用率过程
-3.内存的cgroup作用？配置group的swappniess、最大内存消耗过程
-4.dirty页为什么要写回？怎么写回？时间：dirty_expire_centisecs 默认30s，线程周期性（dirty_writeback_centisecs）起来回写，空间上按比例：dirty_background_ratio,dirty_ratio
-5.内存回收的3个水位及回收过程？
-6.vmstat工具：分析硬盘压力、swap压力、写文件压力等
-7.getdalays工具：评估程序的等待cpu、mem、swap、io的时间，可以知道程序哪慢
+### channel实现
+https://www.jianshu.com/p/ec1aca266bc8
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-6a2358913ceacd4f.jpg)
+主要由两个链表和一个循环队列组成。链表用于放置阻塞中的G
+对于**有buffer的channel**，发送和接受是异步的过程发送时先检查channel是否关闭，再检查buffer是否已满，若满了则将自己放置于sendq中，否则把数据拷贝到buffer中然后在recvq中环形一个G
 
-进程线程管理以及调度：
-1.进程是什么？有哪些资源？pidmax怎么查？
-2.task_struct如何被管理？分别适合哪些场景？
-3.进程的生命周期图？6态之间的关系？
-4.什么是内存泄漏？进程活着才有内存泄漏
-5.作业控制的命令？ctrl z bg fg cpulimit作用？原理？
-6.fork例子中printf打印几次？fork后进程处于就绪态
-7.什么是僵尸进程？怎么处理？可以设置sigchld的函数为默认，由init去收尸
-8.&amp;、killall、pstree
-9.fork、vfork、pthread_create怎么实现？
-10.写时拷贝怎么实现？例子
-11.进程0进程1的作用
-12.睡眠和等待队列的实现？
-13.什么是孤儿进程？怎么托孤？subreaper
-14.top -H
-15.两组矛盾：吞吐vs响应   io消耗型vscpu消耗型 arm big-Little架构cpu
-16.调度策略：实时进程 sched_rr sched_fifo普通进程 nice值 +-5的奖励 cfs完全公平调度
-17任务频繁切换导致哪些问题？
-18.nice低的好处？默认为0
-19.nice renice chrt
-20.多核时的负载均衡分rt进程和普通进程，rt进程平分到各个核上，普通进程周期性负载均衡，fork时负载均衡
+对于**无buffer的channel**，发送时先看recvq是否有G，若为空则将自己放置于sendq
 
-文件系统：
-一.应用程序发起io行为，最终怎么走到硬盘？
-1.应用程序首先和pagecache打交道
-2.pagecache和硬盘打交道（真正去做io行为，称为block io子系统）
-二.free命令下buffer和cached的区别？
-三.O_DIRECT和O_SYNC的区别？
-四.IO电梯调度器的策略？deadline、cfs、noop
-五.块设备的读写过程及性能怎么分析（哪个地方比较慢）？ftrace、blktrace的作用？怎么使用？
-1.blktrace -d /dev/sda1 -o - |blkparse -i - &gt;1.trace
-2.ftrace跟踪块设备读写时的函数及执行时间，函数级别的，而blktrace是针对io的流程，什么时候进plug，什么时候进io调度器等。
-六.ionice、iotop、iostat
-ionice -c 2 -n 0 cat /dev/sda &gt; /dev/null&amp;
-ionice -c 2 -n 7 cat /dev/sda &gt; /dev/null&amp;
-iotop
-iostat
+非 buffer 的 channel 比 buffer channel 少了一次内存 copy。但非 buffer channel 工作起来基本就是相当于个互斥锁，会让 goroutine 无法并行，在多核机器上会导致程序的处理效率很差（即最大并发量很低，机器的 CPU 利用率低）。所以如果 channel 是一个常驻型的，直接make 一个大一点的 buffer channel 没关系。
 
-1.EXT系列文件系统布局以group为单位？（/a/b b在硬盘上如何存放的？）
-2.append一个文件的全流程（删除一个文件的流程）
-3.掉电会导致哪两种问题？分别举例子！为什么会出现不一致？
-4.怎么保证文件系统的一致性？fsck 日志
-5.修改文件系统，造成文件系统不一致？现象，怎么解决？
-6.fsck原理？
-7.日志怎么保证文件系统一致性？
-8.EXT4文件系统工具：mkfs、dumpe2fs、
-blkcat、dd、debugfs blktrace
+###  Select
+Select的源代码函数里，有三个主要的循环。太长了这里不贴代码了。
 
-1.vfs和文件系统的关系？
-2.文件系统是如何组织起来的？
-3.vfs的数据结构有哪些？作用？
-4.目录是什么？怎么访问/usr/bin/emaxs
-5.软链接和硬链接区别？怎么创建ln aa bb，ln -s  cc bb
-6.应用程序read到vfs到pagecache到读写硬盘的\*\*\*作过程？
-7.dmesg两个作用 内核启动信息 prink打印的信息
-dmesg -c  dmesg  &gt; 文件
-8.simplefs怎么做的，有哪些数据结构，流程是什么？
+1. 循环检查（乱序遍历）所有 case 看是否有满足的channel，有就直接执行，然后return，否则执行第2步。
+2. 把 goroutine（也就是自己）加到所有 case 的 channel 的发送或接收队列中，然后阻塞，等待被叫醒。
+3. 被其中一个 case 的 channel 唤醒，把自己从其他所有 case 的 channel 的队列中删除，设置 PC 值，即被唤醒后进入哪个 case。
 
-IO模型：
-1.阻塞io可以被信号打断以及阻塞io的实现
-2.网络模型包括：一个连接，一个进程或线程、一个进程或线程处理多个连接（select/epoll）优缺点及实现方式
-3.signal io及aio的实现
-4.epoll+任务队列+线程池的实现代码（互斥锁和条件变量的使用）
-5.epoll的事件类型：EPOLLIN、EPOLLOUT、EPOLLET、EPOLLLT
-6.条件变量的唤醒：phread-cond-singal、phread-cond-broadcast 区别
 
-1.为什么有那么多种io模型？
-2.5种io模型的特点，怎么使用？
-3.vfs是什么，什么作用？有哪些数据结构？
-4.硬盘是如何组织成文件系统的，文件系统是怎么样的架构？
-5.软链接硬链接区别？
-6.读取/usr/bin/xxx的全流程
-7.ext2/3/4的布局格式
-8.从上到下发起一次block io的全流程
+
+### 内存管理
+
+#### mheap 内存池
+
+**`page`**: 内存页，一块 `8K` 大小的内存空间。Go 与操作系统之间的内存申请和释放，都是以 `page` 为单位的。
+
+**`span`**: 内存块，**一个或多个连续的** `page` 组成一个 `span`。如果把 `page` 比喻成工人，`span` 可看成是小队，工人被分成若干个队伍，不同的队伍干不同的活。
+
+**`sizeclass`**: 空间规格，每个 `span` 都带有一个 `sizeclass`，标记着该 `span` 中的 `page` 应该如何使用。使用上面的比喻，就是 `sizeclass` 标志着 `span` 是一个什么样的队伍。
+
+**`object`**: 对象，用来存储一个变量数据内存空间，一个 `span` 在初始化时，会被切割成一堆**等大**的 `object`。假设 `object` 的大小是 `16B`，`span` 大小是 `8K`，那么就会把 `span` 中的 `page` 就会被初始化 `8K / 16B = 512` 个 `object`。所谓内存分配，就是分配一个 `object` 出去。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-8361f3be115cf456.png)
+
+上图中，不同颜色代表不同的 `span`，不同 `span` 的 `sizeclass` 不同，表示里面的 `page` 将会按照不同的规格切割成一个个等大的 `object` 用作分配。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-356f568da2987e54.png)
+
+`mheap.spans`：存放span的指针，每个指针对应一个page，所以span区域的大小为(512GB/8KB)*指针大小8byte = 512M。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/881857-20171122165701665-214853306.png)
+
+`mheap.bitmap` 用于表示arena区域每8个byte空间中哪些地址保存了对象, 哪些地址包含了**指针**。bitmap区域中一个byte(8 bit)对应了arena区域中的四个指针大小的内存, 也就是2 bit对应一个指针大小的内存.
+所以bitmap区域的大小是 512GB / 指针大小(8 byte) / 4 = 16GB.
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/bef958db28c148f1b8f9285f1dcdd7f2.jpeg)
+
+`mheap.arena_start`: 将要分配给应用程序使用的空间。为了方便管理把arena区域划分成一个个的page，每个page为8KB,一共有512GB/8KB个页；
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/2c45fc61bf184cee31f86a592d4d848c027.jpg)
+
+#### mcentral
+
+ `sizeclass` **相同**的 `span` 会以链表的形式在叫做 mcentral 的结构中组织在一起管理。 当分配一块大小为 `n` 的内存时，系统计算 `n` 应该使用哪种 `sizeclass`，然后根据 `sizeclass` 的值去找到一个可用的 `span` 来用作分配。找到合适的 `span` 后，会从中取一个 `object` 返回给上层使用。
+
+mheap 将从 OS 那里申请过来的内存初始化成一个大 `span`(sizeclass=0)。然后根据需要从这个大 `span` 中切出小 `span`，放在 mcentral 中来管理。大 `span` 由 `mheap.freelarge` 和 `mheap.busylarge` 等管理。如果 mcentral 中的 `span` 不够用了，会从 `mheap.freelarge` 上再切一块，如果 `mheap.freelarge` 空间不够，会再次从 OS 那里申请内存重复上述步骤。
+
+```go
+type mheap struct {
+    // other fields
+    lock      mutex
+    free      [_MaxMHeapList]mspan // free lists of given length， 1M 以下
+    freelarge mspan                // free lists length >= _MaxMHeapList, >= 1M
+    busy      [_MaxMHeapList]mspan // busy lists of large objects of given length
+    busylarge mspan                // busy lists of large objects length >= _MaxMHeapList
+
+    central [_NumSizeClasses]struct { // _NumSizeClasses = 67
+        mcentral mcentral
+        // other fields
+    }
+    // other fields
+}
+
+// Central list of free objects of a given size.
+type mcentral struct {
+    lock      mutex // 分配时需要加锁
+    sizeclass int32 // 哪种 sizeclass
+    nonempty  mspan // 还有可用的空间的 span 链表
+    empty     mspan // 没有可用的空间的 span 列表
+}
+```
+
+这种方式类似于伙伴系统，可以避免出现外碎片
+
+#### mcache
+
+我们可以看到mcentral中的操作都需要加锁，因为并发情况下，很有可能多个线程同时从 mcentral 那里申请内存的，必须要用锁来避免冲突。在高并发的服务中，它会使内存申请成为整个系统的瓶颈；所以在 mcentral 的前面又增加了一层 `mcache`。
+
+每一个 mcache 和每一个处理器(P) 是一一对应的，也就是说每一个 P 都有一个 mcache 成员。 Goroutine 申请内存时，**首先从其所在的 P 的 mcache 中分配**，如果 mcache 没有可用 `span`，再从 mcentral 中获取，并填充到 mcache 中。
+
+从 mcache 上分配内存空间是不需要加锁的，**因为在同一时间里，一个 P 只有一个Goroutine在其上面运行**，不可能出现竞争。没有了锁的限制，大大加速了内存分配。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-e6d7200368ec06b6.png)
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/881857-20171122165741149-1015705312.png)
+
+#### Tiny对象
+
+上面提到的 `sizeclass=1` 的 span，用来给 `<= 8B` 的对象使用，所以像 `int32`, `byte`, `bool` 以及小字符串等常用的微小对象，都会使用 `sizeclass=1` 的 span，但分配给他们 `8B` 的空间，大部分是用不上的。并且这些类型使用频率非常高，就会**导致出现大量的内部碎片**。
+
+所以 Go 尽量不使用 `sizeclass=1` 的 span， 而是将 `< 16B` 的对象为统一视为 **tiny 对象**(tinysize)。分配时，从 `sizeclass=2` 的 span 中获取一个 `16B` 的 object 用以分配。如果存储的对象小于 `16B`，这个空间会被暂时保存起来 (`mcache.tiny` 字段)，**下次分配时会复用这个空间**，直到这个 object 用完为止。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-d026190322b2c139.png)
+
+以上图为例，这样的方式空间利用率是 `(1+2+8) / 16 * 100% = 68.75%`，而如果按照原始的管理方式，利用率是 `(1+2+8) / (8 * 3) = 45.83%`。
+ 源码中注释描述，说是对 tiny 对象的特殊处理，平均会节省 `20%` 左右的内存。
+
+如果要存储的数据里有指针，即使 `<= 8B` 也不会作为 tiny 对象对待，而是正常使用 `sizeclass=1` 的 `span`。
+
+#### 大对象
+
+如上面所述，最大的 sizeclass 最大只能存放 `32K` 的对象。如果一次性申请超过 `32K` 的内存，系统会直接绕过 mcache 和 mcentral，直接从 mheap 上获取，mheap 中有一个 `freelarge` 字段管理着超大 span。
+
+#### 总结
+
+内存的释放过程，没什么特别之处。就是分配的返过程，当 mcache 中存在较多空闲 span 时，会归还给 mcentral；而 mcentral 中存在较多空闲 span 时，会归还给 mheap；mheap 再归还给操作系统。这里就不详细介绍了。
+
+总结一下，这种设计之所以快，主要有以下几个优势：
+
+1. 内存分配大多时候都是在**用户态完成**的，不需要频繁进入内核态。
+2. 每个 P 都有独立的 span cache，**多个 CPU 不会并发读写同一块内存**，进而减少 CPU L1 cache 的 cacheline 出现 dirty 情况，增大 cpu cache 命中率。
+3. 内存碎片的问题，Go 是自己在用户态管理的，在 OS 层面看是没有碎片的，使得**操作系统层面对碎片的管理压力也会降低**。
+4. mcache 的存在使得**内存分配不需要加锁**。
+
+当然这不是没有代价的，Go 需要**预申请大块内存**，这必然会出现一定的浪费，不过好在现在内存比较廉价，不用太在意。
+
+总体上来看，Go 内存管理也是一个金字塔结构：
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-6d4f174886374a83.png)
+
+这种设计比较通用，比如现在常见的 web 服务设计，为提升系统性能，一般都会设计成  `客户端 cache -> 服务端 cache -> 服务端 db` 这几层（当然也可能会加入更多层），也是金字塔结构。
+
+**将有限的计算资源布局成金字塔结构，再将数据从热到冷分为几个层级，放置在金字塔结构上。调度器不断做调整，将热数据放在金字塔顶层，冷数据放在金字塔底层。**
+
+这种设计利用了计算的局部性特征，认为冷热数据的交替是缓慢的。所以最怕的就是，数据访问出现冷热骤变。在操作系统上我们称这种现象为*内存颠簸*，系统架构上通常被说成是*缓存穿透*。其实都是一个意思，就是过度的使用了金字塔低端的资源。
+
+这套内部机制，使得开发高性能服务容易很多，通俗来讲就是坑少了。一般情况下你随便写写性能都不会太差。我遇到过的导致内存分配出现压力的主要有 2 中情况：
+
+1. 频繁申请大对象，常见于文本处理，比如写一个海量日志分析的服务，很多日志内容都很长。这种情况建议自己维护一个对象([]byte)池，避免每次都要去 mheap 上分配。
+2. 滥用指针，指针的存在不仅容易造成内存浪费，对 GC 也会造成额外的压力，所以尽量不要使用指针。
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-a418863ab8ea2190.png)
+
+
+
+### 垃圾回收
+
+#### 三色标记法
+
+为了能让标记过程也能并行，Go 采用了三色标记 + 写屏障的机制。它的步骤大致如下：
+
+1. GC 开始时，认为所有 object 都是**白色**，即垃圾。
+2. 从 root 区(根对象包含了全局变量, 各个G的栈上的变量等)开始遍历，被触达的 object 置成**灰色**。
+3. 遍历所有灰色 object，将他们内部的引用变量置成 **灰色**，自身置成 **黑色**
+4. 循环第 3 步，直到没有灰色 object 了，只剩下了黑白两种，白色的都是垃圾。
+5. **对于黑色 object，如果在标记期间发生了写操作，写屏障会在真正赋值前将新对象标记为灰色**。
+6. 标记过程中，`mallocgc` 新分配的 object，会先被标记成黑色再返回。
+
+![image-20200620100419815](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/image-20200620100419815.png)
+
+还有一种情况，标记过程中，堆上的 object 被赋值给了一个**栈上指针**，导致这个 object 没有被标记到。**因为对栈上指针进行写入，写屏障是检测不到的**。下图展示了整个流程(其中 L 是栈上指针)：
+
+![img](/Users/bytedance/Desktop/知识点记录/SummaryForCampusRecruitment/Summary.assets/11662994-b2d93298df056f97.png)
+
+为了解决这个问题，标记的最后阶段，还会回头重新扫描一下所有的栈空间，确保没有遗漏。而这个过程就需要启动 STW 了，否则并发场景会使上述场景反复重现。
+
+#### 总结流程
+
+1. 正常情况下，写操作就是正常的赋值。
+2. GC 开始，开启写屏障等准备工作。开启写屏障等准备工作需要短暂的 STW。
+3. Stack scan 阶段，从全局空间和 goroutine 栈空间上收集变量。
+4. Mark 阶段，执行上述的三色标记法，直到没有灰色对象。
+5. Mark termination 阶段，开启 STW，回头重新扫描 root 区域新变量，对他们进行标记。
+6. Sweep 阶段，关闭 STW 和 写屏障，对白色对象进行清除。
+
+目前整个GC流程会进行两次STW(Stop The World), 第一次是Mark阶段的开始, 第二次是Mark Termination阶段.
+第一次STW会准备根对象的扫描, 启动写屏障(Write Barrier)和辅助GC(mutator assist).
+第二次STW会重新扫描部分根对象, 禁用写屏障(Write Barrier)和辅助GC(mutator assist).
+
+#### 写屏障(Write Barrier)
+
+因为go支持并行GC, GC的扫描和go代码可以同时运行, 这样带来的问题是GC扫描的过程中go代码有可能改变了对象的依赖树,
+例如开始扫描时发现根对象A和B, B拥有C的指针, GC先扫描A, 然后B把C的指针交给A, GC再扫描B, 这时C就不会被扫描到.
+为了避免这个问题, go在GC的标记阶段会启用写屏障(Write Barrier).GC会认为在这一轮的扫描中C的指针是存活的，即**C赋值给A时变灰**。
+
+#### 何时触发 GC
+
+1. 一般是当 Heap 上的内存达到一定数值后，会触发一次 GC，这个数值我们可以通过环境变量 `GOGC` 或者 `debug.SetGCPercent()` 设置，默认是 `100`，表示当内存增长 `100%` 执行一次 GC。如果当前堆内存使用了 `10MB`，那么等到它涨到 `20MB` 的时候就会触发 GC。
+2. 再就是**每隔 2 分钟**，如果期间内没有触发 GC，也会强制触发一次。
+3. 最后就是用户**手动触发**了，也就是调用 `runtime.GC()` 强制触发一次。

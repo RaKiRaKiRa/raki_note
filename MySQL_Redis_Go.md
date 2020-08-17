@@ -115,7 +115,21 @@ RR隔离级别下
 
 ## 索引数据结构、原因
 
+**不用hash的原因**
 
+不支持范围查找、模糊查找
+
+**不用红黑树的原因：**
+
+索引可能较大，无法一次加载进内存，使用B/B+数可以一次支架在B树的一个节点，然后一步步往下找。
+
+**不用B树而用B+数的原因**
+
+B+树的数据都在叶子节点，同时叶子节点之间还通过指针串联成一条链表。业务中select多条数据的话如果用B树需要做局部的中序遍历，可能会跨层访问。而B+树所有的数据都在叶子节点，不用跨层，同时只需要找到首尾就可以取出所有数据。
+
+**总结：**
+
+如果只须一个数据，那确实是hash更快。但数据库中常常会**选择多条数据或者模糊查找数据**，这时候由于B+树索引有序且有链表相连，他的查询效率会远高于hash。并且数据库中索引一般在磁盘上，**数据量大时可能无法一次装入内存**，B+树的设计可以允许数据分批加载，同时树的高度角度，查找效率较高、
 
 ## 主键索引 非主键索引 覆盖索引
 
@@ -165,6 +179,15 @@ RR隔离级别下
 # Redis
 
 ![preview](MySQL_Redis_Go/v2-f1e4cbcde5f73c70f7e5b71a363cc21d_r.jpg)
+
+## 为什么快
+
+1. 使用C语言 贴近操作系统
+2. Redis将所有数据放在内存中，非数据同步正常工作中，是不需要从磁盘读取数据的
+3. Redis使用单线程简化算法的实现，并发的数据结构实现不但困难且测试也麻烦且，单线程避免了线程切换以及加锁释放锁带来的消耗
+4. 使用多路复用，自身的事件处理模型将epoll的read、write、close等都转换成事件，不在网络I/O上浪费过多的时间
+
+
 
 ## 数据预热
 
@@ -216,7 +239,11 @@ RR隔离级别下
     }
 	void releaseLock(Redis client, String lockKey, String requestId) {   
         //首先获取锁对应的value值，检查是否与requestId相等，如果相等则删除锁（解锁）。
-		String script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+		String script = "\
+            if redis.call('get', KEYS[1]) == ARGV[1] \
+            then return redis.call('del', KEYS[1]) \
+            else return 0 \
+            end";
         Object result = jedis.eval(script, lockKey, requestId);        
         if (RELEASE_SUCCESS.equals(result)) {            
             return true;
@@ -232,6 +259,8 @@ RR隔离级别下
 ## 缓存一致性
 
 ![这里写图片描述](MySQL_Redis_Go/20180306155314204.png)
+
+如果项目对缓存的要求是强一致性的，那么就不要使用缓存。我们只能采取合适的策略来降低缓存和数据库间数据不一致的概率，而**无法保证两者间的强一致性**。合适的策略包括合适的缓存更新策略，更新数据库后及时更新缓存、缓存失败时增加重试机制。
 
 **1、第一种方案：采用延时双删策略**
 
@@ -353,6 +382,7 @@ https://zhuanlan.zhihu.com/p/89961333
 
 1. 接口层增加校验，如用户鉴权校验，id做基础校验，id<=0的直接拦截；
 2. 从缓存取不到的数据，在数据库中也没有取到，这时也可以将key-value对写为key-null，缓存有效时间可以设置短点，如30秒（设置太长会导致正常情况也没法使用）。这样可以防止攻击用户反复用同一个id暴力攻击
+3. Redis提供的**布隆过滤器（Bloom Filter）**这个也能很好的预防缓存穿透的发生，他的原理也很简单，就是利用高效的数据结构和算法快速判断出你这个Key是否在数据库中存在，不存在你return就好了，存在你就去查DB刷新KV再return。
 
 ## 跳表实现，复杂度
 
@@ -787,6 +817,65 @@ https://redis.io/topics/persistence
 ## sync.map实现
 
 ## channel实现
+
+```go
+type hchan struct {
+    qcount   uint           // 缓冲区可容纳大小
+    dataqsiz uint           // 缓冲区已有数据大小
+    buf      unsafe.Pointer // 缓冲区
+    elemsize uint16
+    closed   uint32
+    elemtype *_type // 元素类型
+    sendx    uint   // 待发送goroutine数
+    recvx    uint   // 待接收goroutine数
+    recvq    waitq  // 等待接收的goroutine
+    sendq    waitq  // 等待发送的goroutine
+
+    // lock protects all fields in hchan, as well as several
+    // fields in sudogs blocked on this channel.
+    //
+    // Do not change another G's status while holding this lock
+    // (in particular, do not ready a G), as this can deadlock
+    // with stack shrinking.
+    lock mutex  //为每个读写操作锁定通道，因为发送和接收必须是互斥操作。
+}
+```
+
+- hchan结构体使**用一个环形队列**来保存groutine之间传递的数据(如果是缓存channel的话)，
+
+- 使用**两个list**保存像该chan发送和从该chan接收数据的goroutine，
+
+- 还有一个mutex来保证操作这些结构的安全。
+
+发送操作概要
+
+1、锁定整个通道结构。
+
+2、确定写入。尝试`recvq`从等待队列中等待goroutine，然后将元素直接写入goroutine。
+
+3、如果recvq为Empty，则确定缓冲区是否可用。如果可用，从当前goroutine复制数据到缓冲区。
+
+4、如果缓冲区已满，**则要**写入的元素将保存在当前正在执行的goroutine的结构中，并且当前goroutine将在**sendq中**排队并从运行时挂起。
+
+5、写入完成释放锁。
+
+读取操作概要
+
+1、先获取channel全局锁
+
+2、尝试sendq从等待队列中获取等待的goroutine，
+
+3、 如有等待的goroutine，没有缓冲区，取出goroutine并读取数据，然后唤醒这个goroutine，结束读取释放锁。
+
+4、如有等待的goroutine，且有缓冲区（此时缓冲区已满），从缓冲区队首取出数据，再从sendq取出一个goroutine，将goroutine中的数据存入buf队尾，结束读取释放锁。
+
+5、如没有等待的goroutine，且缓冲区有数据，直接读取缓冲区数据，结束读取释放锁。
+
+6、如没有等待的goroutine，且没有缓冲区或缓冲区为空，将当前的goroutine加入sendq排队，进入睡眠，等待被写goroutine唤醒。结束读取释放锁。
+
+
+
+
 
 ## gmp实现
 

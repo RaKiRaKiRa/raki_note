@@ -207,22 +207,22 @@ RR隔离级别下
 //通过超期时间解决了死锁问题
 //通过解锁时判断requestId解决了任何客户端都可以解锁问题。
 
-    bool tryLock(Redis client, String lockKey, String requestId, int expireTime) {
-        String result = client.set(lockKey, requestId, NX, PX, expireTime);        
-        if (LOCK_SUCCESS.equals(result)) {            
-            return true;
-        }        
-        return false;
-    }
-	void releaseLock(Redis client, String lockKey, String requestId) {   
-        //首先获取锁对应的value值，检查是否与requestId相等，如果相等则删除锁（解锁）。
-		String script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
-        Object result = jedis.eval(script, lockKey, requestId);        
-        if (RELEASE_SUCCESS.equals(result)) {            
-            return true;
-        }        
-        return false;
-	}
+bool tryLock(Redis client, String lockKey, String requestId, int expireTime) {
+    String result = client.set(lockKey, requestId, NX, PX, expireTime);        
+    if (LOCK_SUCCESS.equals(result)) {            
+        return true;
+    }        
+    return false;
+}
+void releaseLock(Redis client, String lockKey, String requestId) {   
+    //首先获取锁对应的value值，检查是否与requestId相等，如果相等则删除锁（解锁）。
+    String script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+    Object result = jedis.eval(script, lockKey, requestId);        
+    if (RELEASE_SUCCESS.equals(result)) {            
+        return true;
+    }        
+    return false;
+}
 
 
 ```
@@ -331,9 +331,7 @@ https://zhuanlan.zhihu.com/p/89961333
 1. 设置热点数据永远不过期。
 2. 加互斥锁，互斥锁参考代码如下：
 
-​         ![img](MySQL_Redis_Go/20180919143214879.png)
-
- 
+​         ![img](MySQL_Redis_Go/20180919143214879.png) 
 
 说明：
 

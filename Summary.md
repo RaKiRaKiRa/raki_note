@@ -2088,6 +2088,27 @@ PUT所对应的URI是要创建或更新的资源本身。比如：PUT http://www
 
 <https://juejin.im/post/6844903575684907016>
 
+Cookie是服务器在**本地机器**上存储的一小段文本，并随着每次请求发送到服务器。**Cookie技术通过请求和响应报文中写入Cookie信息来控制客户端的状态。**
+
+
+
+![img](Summary/1621f0b5f29d7f7c)
+
+服务端执行session机制时候会生成session的id值，这个id值会发送给客户端，客户端每次请求都会把这个id值放到http请求的头部发送给服务端，而这个id值在客户端会保存下来，保存的容器就是cookie
+
+![img](Summary/1621f13fade59484)
+
+![img](Summary/1621f6d2880ac3ab)
+
+**总结：**
+
+1. cookie数据存放在客户的浏览器（客户端）上，session数据放在服务器上，但是服务端的session的实现对客户端的cookie有依赖关系的；
+2. cookie不是很安全，别人可以分析存放在本地的COOKIE并进行COOKIE欺骗，考虑到安全应当使用session；
+3. session会在一定时间内保存在服务器上。当访问增多，会比较占用你服务器的性能。考虑到减轻服务器性能方面，应当使用COOKIE；
+4. 单个cookie在客户端的限制是3K，就是说一个站点在客户端存放的COOKIE不能超过3K；
+
+
+
 ### 55. 两个不同的进程同时用一个端口号，有没有问题？
 
 1. so_reuseaddr可以，一次只苏醒一个进程的accept，内核解决了惊群；

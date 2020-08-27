@@ -415,7 +415,7 @@ insert_unique_noresize(...)方法：此api主要用于往hashtable中插入新�
 rehash和hash都是用头插法。
 
 ### 17.**STL中unordered_map和map的区别**
-unordered_map底层是用**hash表**实现的，通过把一个key映射到hash表中的一个位置来存取value值。因此，unordered_map的元素是无序的。但因为内部实现了hash表，因此**查找速度是非常快**的，但是hash表的**建立比较费**时。即unordered_map对于查找问题会更高效一些。
+unordered_map底层是用**hash表**实现的，通过把一个key映射到hash表中的一个位置来存取value值。因此，unordered_map的元素是无序的。但因为内部实现了hash表，因此**查找速度是非常快**的，但是hash表的**建立比较费时，空间占用较大**。即unordered_map对于查找问题会更高效一些。
 STL中的map底层是用**红黑树**实现的，由于红黑树具有自动排序的功能，所以map中的元素是有序的，这也是map的最大优点。内部实现一个红黑树，使得map的很多操作在logn的时间复杂度下就可以实现，因此效率也很高。但是也正因为使用了红黑树，每一个节点需要额外保存父节点，孩子节点以及颜色性质等信息，使得每一个节点都**占用大量的空间**。即map在**有顺序要求**的问题中，更加有效。（红黑树回答特点即可，见算法）
 
 1. 根节点和叶节点（NULL） 都是黑色 

@@ -215,6 +215,15 @@ json解析和网络通信都封装在RpcClient和RpcServer里，由网络库Cycl
 
   我们在处理socket可读事件时，必须一次把socket数据读完，否则就会反复触发POLLIN事件(这里所述针对epoll的LT模式)，造成主循环busy-loop，但是话又说回来，我们如果一次把socket的数据都读完，就没法保证具体某条消息的完整性了。那么我们的网络库该杂么做呢？我们的网络库因该先把读到的内容存在input buffer中，根据应用层协议判定是否是一个完整的包，等input buffer中有完整的消息了，再通知业务程序，这样就可提高速度。
 
+### 22. ET与LT选择
+
+1. ET本身并不会造成饥饿，由于事件只通知一次，开发者一不小心就容易遗漏了待处理的数据
+2. 使用ET模式，特定场景下会比LT更快，因为它可以便捷的处理EPOLLOUT事件，**省去打开与关闭EPOLLOUT的epoll_ctl（EPOLL_CTL_MOD）调用**。从而有可能让你的性能得到一定的提升。
+   例如你需要写出1M的数据，写出到socket 256k时，返回了EAGAIN，ET模式下，当再次epoll返回EPOLLOUT事件时，继续写出待写出的数据，当没有数据需要写出时，不处理直接略过即可。而LT模式则需要先打开EPOLLOUT，当没有数据需要写出时，再关闭EPOLLOUT（否则会一直返回EPOLLOUT事件）
+   总体来说，**ET处理EPOLLOUT方便高效些，LT不容易遗漏事件、不易产生bug**
+   如果server的响应通常较小，不会触发EPOLLOUT，那么适合使用LT，例如redis等。而nginx作为高性能的通用服务器，网络流量可以跑满达到1G，这种情况下很容易触发EPOLLOUT，则使用ET。
+3. ET模式下触发读写需要读写到不可以再读写，实际上会多进行一次read/write的上下文切换。对于数据量较小的读，lt只需要两次上下文切换（epoll_wait唤醒，read读），而et则需要三次（epoll_wait唤醒，read读，read读失败）。但对于数据量较大，比如需要读三次，lt需要6次上下文切换（epoll_wait唤醒，read读）\*3，et则只需要5次（epoll_wait唤醒，read读\*3，read失败）。
+
 
 
 ## 1语言基础（C++）
@@ -415,7 +424,7 @@ insert_unique_noresize(...)方法：此api主要用于往hashtable中插入新�
 rehash和hash都是用头插法。
 
 ### 17.**STL中unordered_map和map的区别**
-unordered_map底层是用**hash表**实现的，通过把一个key映射到hash表中的一个位置来存取value值。因此，unordered_map的元素是无序的。但因为内部实现了hash表，因此**查找速度是非常快**的，但是hash表的**建立比较费**时。即unordered_map对于查找问题会更高效一些。
+unordered_map底层是用**hash表**实现的，通过把一个key映射到hash表中的一个位置来存取value值。因此，unordered_map的元素是无序的。但因为内部实现了hash表，因此**查找速度是非常快**的，但是hash表的**建立比较费时，空间占用较大**。即unordered_map对于查找问题会更高效一些。
 STL中的map底层是用**红黑树**实现的，由于红黑树具有自动排序的功能，所以map中的元素是有序的，这也是map的最大优点。内部实现一个红黑树，使得map的很多操作在logn的时间复杂度下就可以实现，因此效率也很高。但是也正因为使用了红黑树，每一个节点需要额外保存父节点，孩子节点以及颜色性质等信息，使得每一个节点都**占用大量的空间**。即map在**有顺序要求**的问题中，更加有效。（红黑树回答特点即可，见算法）
 
 1. 根节点和叶节点（NULL） 都是黑色 

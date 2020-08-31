@@ -2846,6 +2846,20 @@ Linux 内核提供了一种通过 /[proc](https://www.gzy2000.cn/tag/proc)�
 先用top定位出问题的进程，再用top定位到出问题的线程，再打印线程堆栈查看运行情况
 
 
+
+## 42. pstack+gdb死锁分析
+
+​       gdb
+
+​       attach pid
+
+​       thread applay all bt
+
+或者直接pstack pid
+
+<https://blog.csdn.net/zhang2531/article/details/52085731>
+
+
 ## 5操作系统
 
 ### 1. **进程与线程的区别和联系，协程呢**

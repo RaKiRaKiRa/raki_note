@@ -207,6 +207,8 @@ B+树的数据都在叶子节点，同时叶子节点之间还通过指针串联
 
 https://zhuanlan.zhihu.com/p/144471126
 
+![img](MySQL_Redis_Go.assets/20180213110848081.png)
+
 ## select执行过程
 
 (1)FROM <left_table>

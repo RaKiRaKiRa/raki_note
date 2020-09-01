@@ -68,7 +68,7 @@ RR隔离级别下
 
 确保事务可以多次从一个字段中读取相同的值，在这个事务持续期间，禁止其他事务对**这个字段**进行**更新**。
 
-**（理论上是对字段加锁，实际通过MVCC使用版本号大大简化）**
+**（理论上是对字段加锁，实际通过MVCC使用版本号大大简化，解决了快照读的幻读问题，但当前读的幻读仍需要间隙锁）**
 
 可以避免賍读和不可重复读，但幻读已然存在
 
@@ -204,7 +204,7 @@ B+树的数据都在叶子节点，同时叶子节点之间还通过指针串联
 
 1. 使用C语言 贴近操作系统
 2. Redis将所有数据放在内存中，非数据同步正常工作中，是不需要从磁盘读取数据的
-3. Redis使用单线程简化算法的实现，并发的数据结构实现不但困难且测试也麻烦且，单线程避免了线程切换以及加锁释放锁带来的消耗
+3. Redis使用单线程简化算法的实现，并发的数据结构实现不但困难且测试也麻烦，单线程避免了线程切换以及加锁释放锁带来的消耗
 4. 使用多路复用，自身的事件处理模型将epoll的read、write、close等都转换成事件，不在网络I/O上浪费过多的时间
 
 
@@ -264,7 +264,7 @@ void releaseLock(Redis client, String lockKey, String requestId) {
             then return redis.call('del', KEYS[1]) \
             else return 0 \
             end";
-    Object result = jedis.eval(script, lockKey, requestId);        
+    Object result = client.eval(script, lockKey, requestId);        
     if (RELEASE_SUCCESS.equals(result)) {            
         return true;
     }        
@@ -897,6 +897,12 @@ type hchan struct {
 ## gmp实现
 
 ## csp
+
+
+
+### 简易令牌通
+
+<https://zhuanlan.zhihu.com/p/36648767>
 
 # 算法题
 

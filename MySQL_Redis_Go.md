@@ -238,6 +238,39 @@ https://zhuanlan.zhihu.com/p/144471126
 
 
 
+## 分布式锁
+
+```cpp
+class DistributedLock {
+public:
+    DistributedLock(MySQLClient* client, string tableName, string request):
+    	client_(client),
+    	request_(request),
+    	tableName_(tableName)
+    {
+    	client_.autoCommit(false);
+        while(true) {
+            lock result = client.sql("select request from ? where key = ? for update", tableName, key);
+            client.updata("request = ?", request);
+            isLock = true;
+        }
+        
+    }
+    
+    ~DistributedLock() {
+        client.updata("request = ?", "");
+        client_.commit();
+    }
+private:
+    MySQLClient* client_;
+    string request_;
+    string tableName_;
+    bool isLock;
+}
+```
+
+
+
 # Redis
 
 ![preview](MySQL_Redis_Go/v2-f1e4cbcde5f73c70f7e5b71a363cc21d_r.jpg)
@@ -293,8 +326,9 @@ https://zhuanlan.zhihu.com/p/144471126
 //通过解锁时判断requestId解决了任何客户端都可以解锁问题。
 
 bool tryLock(Redis client, String lockKey, String requestId, int expireTime) {
-    String result = client.set(lockKey, requestId, NX, PX, expireTime);        
-    if (LOCK_SUCCESS.equals(result)) {            
+    String result = client.setnx(lockKey, requestId);        
+    if (LOCK_SUCCESS.equals(result)) {      
+        client.setex(lockKey, expireTime);
         return true;
     }        
     return false;

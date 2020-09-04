@@ -325,10 +325,9 @@ private:
 //通过超期时间解决了死锁问题
 //通过解锁时判断requestId解决了任何客户端都可以解锁问题。
 
-bool tryLock(Redis client, String lockKey, String requestId, int expireTime) {
-    String result = client.setnx(lockKey, requestId);        
-    if (LOCK_SUCCESS.equals(result)) {      
-        client.setex(lockKey, expireTime);
+bool tryLock(Redis client, String lockKey, String requestId, int expire) {
+    String result = client.set(lockKey,requestId,"NX","EX",expire);      
+    if (result == "1") {      
         return true;
     }        
     return false;
